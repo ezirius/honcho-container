@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$ROOT/lib/shell/common.sh"
+
+if [[ $# -ne 1 ]]; then
+  usage_error "$(basename "$0") requires exactly 1 argument: <workspace-name>"
+fi
+
+require_podman
+require_podman_compose
+
+resolve_workspace "$1"
+ensure_workspace_dirs
+if [[ -f "$HONCHO_ENV_FILE" ]]; then
+  load_env_file "$HONCHO_ENV_FILE"
+fi
+
+COMPOSE_OVERRIDE_FILE="$(mktemp)"
+trap 'rm -f "$COMPOSE_OVERRIDE_FILE"' EXIT
+create_compose_override "$COMPOSE_OVERRIDE_FILE"
+
+run_compose "$COMPOSE_OVERRIDE_FILE" exec api /bin/sh

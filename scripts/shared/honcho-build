@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$ROOT/lib/shell/common.sh"
+
+if [[ $# -ne 0 ]]; then
+  usage_error "$(basename "$0") takes no arguments"
+fi
+
+require_podman
+require_podman_compose
+
+if image_exists; then
+  echo "==> Honcho image already exists: $HONCHO_IMAGE_NAME"
+  echo "==> Skipping rebuild"
+  exit 0
+fi
+
+HONCHO_REF="$(resolve_honcho_ref)"
+export HONCHO_REF
+
+WORKSPACE_INPUT="(shared image build)"
+WORKSPACE_ROOT="(resolved at runtime)"
+HONCHO_ENV_FILE="(resolved at runtime)"
+HONCHO_CONFIG_TOML="(resolved at runtime)"
+DATA_POSTGRES_DIR="(resolved at runtime)"
+DATA_REDIS_DIR="(resolved at runtime)"
+HONCHO_PROJECT_NAME="${HONCHO_PROJECT_PREFIX}-shared"
+
+COMPOSE_OVERRIDE_FILE="$(mktemp)"
+trap 'rm -f "$COMPOSE_OVERRIDE_FILE"' EXIT
+create_compose_override "$COMPOSE_OVERRIDE_FILE"
+
+print_summary
+echo "==> Building Honcho image"
+run_compose "$COMPOSE_OVERRIDE_FILE" build --pull --no-cache api deriver
+echo "==> Honcho image build complete"

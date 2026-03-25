@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$ROOT/lib/shell/common.sh"
+
+if [[ $# -ne 1 ]]; then
+  usage_error "$(basename "$0") requires exactly 1 argument: <workspace-name>"
+fi
+
+"$SCRIPT_DIR/honcho-build"
+"$SCRIPT_DIR/honcho-upgrade"
+"$SCRIPT_DIR/honcho-start" "$1"
+"$SCRIPT_DIR/honcho-status" "$1"

@@ -1,0 +1,40 @@
+[app]
+LOG_LEVEL = "INFO"
+NAMESPACE = "honcho"
+
+[db]
+CONNECTION_URI = "postgresql+psycopg://postgres:postgres@database:5432/postgres"
+SCHEMA = "public"
+POOL_PRE_PING = true
+
+[auth]
+USE_AUTH = false
+
+[cache]
+ENABLED = true
+URL = "redis://redis:6379/0?suppress=true"
+
+[llm]
+# Default upstream embedding model: text-embedding-3-small
+EMBEDDING_PROVIDER = "openai"
+
+[deriver]
+ENABLED = true
+WORKERS = 1
+# Default upstream deriver model: gemini-2.5-flash-lite
+PROVIDER = "google"
+MODEL = "gemini-2.5-flash-lite"
+
+[summary]
+ENABLED = true
+# Default upstream summary model: gemini-2.5-flash
+PROVIDER = "google"
+MODEL = "gemini-2.5-flash"
+
+# Upstream defaults also use Anthropic models outside this reduced local example:
+# - claude-haiku-4-5 for higher dialectic levels and specialist reasoning
+# - claude-sonnet-4-20250514 for dreaming
+
+[vector_store]
+TYPE = "pgvector"
+MIGRATED = false

@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$ROOT/lib/shell/common.sh"
+
+if [[ $# -ne 0 ]]; then
+  usage_error "$(basename "$0") takes no arguments"
+fi
+
+require_podman
+require_podman_compose
+
+if ! image_exists; then
+  echo "==> Honcho image not found: $HONCHO_IMAGE_NAME"
+  echo "==> Building image first"
+  exec "$SCRIPT_DIR/honcho-build"
+fi
+
+HONCHO_REF="$(resolve_honcho_ref)"
+export HONCHO_REF
+CURRENT_REPO_URL="$(image_label honcho.repo_url)"
+CURRENT_REF="$(image_label honcho.ref)"
+
+if [[ -n "$CURRENT_REPO_URL" && -n "$CURRENT_REF" && "$CURRENT_REPO_URL" == "$HONCHO_REPO_URL" && "$CURRENT_REF" == "$HONCHO_REF" ]]; then
+  echo "==> Honcho image already matches requested source: $HONCHO_IMAGE_NAME"
+  echo "==> Upstream repo: $CURRENT_REPO_URL"
+  echo "==> Upstream ref:  $CURRENT_REF"
+  echo "==> No upgrade needed"
+  exit 0
+fi
+
+echo "==> Upgrading Honcho image: $HONCHO_IMAGE_NAME"
+if [[ -n "$CURRENT_REPO_URL" || -n "$CURRENT_REF" ]]; then
+  echo "==> Current upstream repo: ${CURRENT_REPO_URL:-unknown}"
+  echo "==> Current upstream ref:  ${CURRENT_REF:-unknown}"
+else
+  echo "==> Current image metadata is missing; rebuilding to refresh version tracking"
+fi
+echo "==> Target upstream repo:  $HONCHO_REPO_URL"
+echo "==> Target upstream ref:   $HONCHO_REF"
+podman image rm -f "$HONCHO_IMAGE_NAME" >/dev/null
+exec "$SCRIPT_DIR/honcho-build"
