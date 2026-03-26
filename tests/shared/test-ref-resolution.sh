@@ -39,7 +39,6 @@ assert_contains() {
 
 mkdir -p "$TMPDIR/repos/plastic-labs/honcho/releases" "$TMPDIR/repos/plastic-labs/honcho"
 printf '{"tag_name":"v9.9.9"}\n' > "$TMPDIR/repos/plastic-labs/honcho/releases/latest"
-printf '[{"name":"v9.9.8"}]\n' > "$TMPDIR/repos/plastic-labs/honcho/tags"
 
 python3 -m http.server 18080 --bind 127.0.0.1 --directory "$TMPDIR" >/dev/null 2>&1 &
 SERVER_PID=$!
@@ -48,8 +47,12 @@ sleep 1
 assert_eq 'v9.9.9' "$(HONCHO_REF=latest-release HONCHO_GITHUB_API_BASE=http://127.0.0.1:18080 resolve_honcho_ref)" 'latest release endpoint is preferred when available'
 
 rm -f "$TMPDIR/repos/plastic-labs/honcho/releases/latest"
-
-assert_eq 'v9.9.8' "$(HONCHO_REF=latest-release HONCHO_GITHUB_API_BASE=http://127.0.0.1:18080 resolve_honcho_ref)" 'tag fallback is used when latest release endpoint is unavailable'
+ERR_FILE="$TMPDIR/release.err"
+if HONCHO_REF=latest-release HONCHO_GITHUB_API_BASE=http://127.0.0.1:18080 resolve_honcho_ref >/dev/null 2> "$ERR_FILE"; then
+  printf 'assertion failed: latest-release should fail when the release endpoint is unavailable\n' >&2
+  exit 1
+fi
+assert_contains "$ERR_FILE" 'Latest upstream Honcho release not found' 'missing release fails clearly'
 
 assert_eq 'v3.0.3' "$(HONCHO_REF=v3.0.3 resolve_honcho_ref)" 'explicit ref bypasses remote resolution'
 

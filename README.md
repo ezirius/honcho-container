@@ -22,7 +22,7 @@ Honcho itself runs locally in containers, while LLM calls still use remote provi
 
    `./scripts/shared/bootstrap ezirius`
 
-`bootstrap` builds the shared local Honcho image from the latest upstream tagged release by default, upgrades it if the requested upstream source changed, starts the stack for the selected workspace, waits for the API to become healthy, and then prints the local access details.
+`bootstrap` builds the shared local Honcho image from the latest upstream GitHub release by default, upgrades it if the requested upstream source changed, starts the stack for the selected workspace, waits for the API to become healthy, and then prints the local access details.
 
 ## Workspace layout
 
@@ -78,7 +78,7 @@ If you set `HONCHO_DB_HOST_PORT` or `HONCHO_REDIS_HOST_PORT`, those services are
 - `honcho-upgrade` rebuilds the shared image only when the requested upstream source changed
 - `honcho-start` starts or reuses the local stack only
 - `bootstrap` performs the full `build -> upgrade -> start -> health check` flow
-- by default, `honcho-build` and `honcho-upgrade` resolve the latest upstream Honcho release tag; if the releases endpoint is unavailable, they fall back to the latest upstream tag
+- by default, `honcho-build` and `honcho-upgrade` resolve the latest upstream Honcho release tag and fail clearly if no upstream release is available
 
 Scripts that take no positional arguments reject them explicitly. Workspace-scoped scripts require exactly one workspace name, except `honcho-logs`, which accepts a workspace name plus optional compose log arguments.
 
@@ -86,12 +86,28 @@ Because the stack is workspace-scoped, the runtime scripts use a workspace name 
 
 ## Useful commands
 
-- `./scripts/shared/honcho-status`
-- `./scripts/shared/honcho-logs`
-- `./scripts/shared/honcho-shell`
-- `./scripts/shared/honcho-stop`
-- `./scripts/shared/honcho-remove`
+- `./scripts/shared/honcho-status <workspace-name>`
+- `./scripts/shared/honcho-logs <workspace-name> [compose log args...]`
+- `./scripts/shared/honcho-shell <workspace-name>`
+- `./scripts/shared/honcho-stop <workspace-name>`
+- `./scripts/shared/honcho-remove <workspace-name>`
 - `./scripts/shared/honcho-upgrade`
+
+## GitHub setup on Maldoria
+
+This repo is configured to use the repo-specific SSH alias:
+
+- `github-maldoria-honcho-container`
+
+If `git push` says it cannot resolve that hostname, the repo remote is already correct but your host SSH config has not been materialised yet. On Maldoria, run the managed setup from inside this repo:
+
+`/workspace/Development/OpenCode/installations-configurations/scripts/macos/git-configure`
+
+That workflow writes the matching `Host github-maldoria-honcho-container` block into `~/.ssh/config`, exports the public key file `~/.ssh/maldoria-github-ezirius-honcho-container.pub`, and points the repo remote at the alias.
+
+After that, test SSH auth with:
+
+`ssh -T git@github-maldoria-honcho-container`
 
 ## Data preservation
 
@@ -118,3 +134,7 @@ To remove the service data directories for Postgres and Redis as well, set:
 ```bash
 HONCHO_REMOVE_VOLUMES=1 ./scripts/shared/honcho-remove ezirius
 ```
+
+## Verification
+
+Run `tests/shared/test-all.sh` to execute the repository shell checks in one command.

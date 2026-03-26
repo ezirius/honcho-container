@@ -100,7 +100,6 @@ import urllib.request
 base = os.environ.get("HONCHO_GITHUB_API_BASE", "https://api.github.com").rstrip("/")
 repo_slug = os.environ["HONCHO_REPO_SLUG"].strip("/")
 latest_url = f"{base}/repos/{repo_slug}/releases/latest"
-tags_url = f"{base}/repos/{repo_slug}/tags"
 headers = {
     "Accept": "application/vnd.github+json",
     "User-Agent": "honcho-container/1.0",
@@ -118,18 +117,13 @@ try:
         print(tag_name)
         sys.exit(0)
 except urllib.error.HTTPError as exc:
-    if exc.code != 404:
-        raise
+    if exc.code == 404:
+        raise SystemExit("Latest upstream Honcho release not found")
+    raise SystemExit(f"failed to resolve latest upstream Honcho release: HTTP {exc.code}")
+except urllib.error.URLError as exc:
+    raise SystemExit(f"failed to resolve latest upstream Honcho release: {exc.reason}")
 
-tags = fetch_json(tags_url)
-if not tags:
-    raise SystemExit("No upstream Honcho tags found")
-
-tag_name = tags[0].get("name", "")
-if not tag_name:
-    raise SystemExit("Latest upstream Honcho tag did not include a name")
-
-print(tag_name)
+raise SystemExit("Latest upstream Honcho release did not include a tag name")
 PY
 }
 
@@ -346,7 +340,12 @@ wait_for_api() {
 from urllib.request import urlopen
 import sys
 
-urlopen(sys.argv[1], timeout=5)
+from urllib.error import URLError
+
+try:
+    urlopen(sys.argv[1], timeout=5)
+except URLError:
+    raise SystemExit(1)
 PY
   do
     attempts=$((attempts + 1))

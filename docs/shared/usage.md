@@ -13,7 +13,7 @@ Recommended one-step workflow:
 `bootstrap` runs `honcho-build`, then `honcho-upgrade`, then `honcho-start`, then waits for the API to become healthy and prints the local access details.
 
 `honcho-build` is intentionally workspace-independent so the local wrapper stays thin and the shared image stays close to upstream Honcho.
-By default it resolves the latest upstream Honcho tagged release. If the upstream releases endpoint is unavailable, it falls back to the latest upstream tag.
+By default it resolves the latest upstream Honcho GitHub release and fails clearly if no upstream release is available.
 That automatic `latest-release` resolution currently expects `HONCHO_REPO_URL` to point at a GitHub repository URL.
 
 ## Workspace model
@@ -65,19 +65,19 @@ If you set `HONCHO_DB_HOST_PORT` or `HONCHO_REDIS_HOST_PORT`, those services are
   - upstream Honcho repo used during image build
   - `latest-release` resolution derives the GitHub owner/repo from this URL
 - `HONCHO_BASE_ROOT`
-  - base directory used when you pass a workspace name instead of an absolute path
+  - base directory used when you pass a workspace name
   - default: `~/Documents/Ezirius/.applications-data/Honcho`
 - `HONCHO_REF`
   - upstream branch or tag to build from
   - default: `latest-release`
-  - `latest-release` resolves the latest upstream Honcho release tag, with a fallback to the latest upstream tag when no release entry is available
+  - `latest-release` resolves the latest upstream Honcho release tag and fails clearly if no release entry is available
 - `HONCHO_GITHUB_API_BASE`
   - GitHub API base used to resolve `latest-release`
   - default: `https://api.github.com`
 - `HONCHO_IMAGE_NAME`
   - local image name used by build and compose
-- `HONCHO_PROJECT_NAME`
-  - compose project name
+- `HONCHO_PROJECT_PREFIX`
+  - prefix used when deriving the compose project name from the workspace
 - `HONCHO_API_HOST_PORT`
   - API host port
   - default: `8000`
@@ -96,7 +96,7 @@ If you set `HONCHO_DB_HOST_PORT` or `HONCHO_REDIS_HOST_PORT`, those services are
 - `./scripts/shared/honcho-upgrade`
 - `./scripts/shared/honcho-start <workspace-name>`
 - `./scripts/shared/honcho-status <workspace-name>`
-- `./scripts/shared/honcho-logs <workspace-name>`
+- `./scripts/shared/honcho-logs <workspace-name> [compose log args...]`
 - `./scripts/shared/honcho-shell <workspace-name>`
 - `./scripts/shared/honcho-stop <workspace-name>`
 - `./scripts/shared/honcho-remove <workspace-name>`
