@@ -7,6 +7,7 @@ services:
       args:
         HONCHO_REPO_URL: ${HONCHO_REPO_URL:-https://github.com/plastic-labs/honcho.git}
         HONCHO_REF: ${HONCHO_REF:-latest-release}
+        HONCHO_WRAPPER_FINGERPRINT: ${HONCHO_WRAPPER_FINGERPRINT:-}
     entrypoint:
       - /bin/sh
       - -lc
@@ -16,6 +17,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    restart: unless-stopped
     ports:
       - ${HONCHO_API_HOST_PORT:-8000}:8000
     environment:
@@ -45,6 +47,7 @@ services:
       args:
         HONCHO_REPO_URL: ${HONCHO_REPO_URL:-https://github.com/plastic-labs/honcho.git}
         HONCHO_REF: ${HONCHO_REF:-latest-release}
+        HONCHO_WRAPPER_FINGERPRINT: ${HONCHO_WRAPPER_FINGERPRINT:-}
     entrypoint:
       - python
       - -m
@@ -54,6 +57,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    restart: unless-stopped
     environment:
       DB_CONNECTION_URI: postgresql+psycopg://postgres:postgres@database:5432/postgres
       CACHE_URL: redis://redis:6379/0?suppress=true

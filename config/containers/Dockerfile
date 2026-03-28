@@ -2,9 +2,11 @@ FROM python:3.13-slim-bookworm
 
 ARG HONCHO_REPO_URL=https://github.com/plastic-labs/honcho.git
 ARG HONCHO_REF=latest-release
+ARG HONCHO_WRAPPER_FINGERPRINT=
 
 LABEL honcho.repo_url=$HONCHO_REPO_URL
 LABEL honcho.ref=$HONCHO_REF
+LABEL honcho.wrapper_fingerprint=$HONCHO_WRAPPER_FINGERPRINT
 
 COPY --from=ghcr.io/astral-sh/uv:0.9.24 /uv /bin/uv
 

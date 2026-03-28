@@ -5,6 +5,13 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$ROOT/lib/shell/common.sh"
 
+if [[ ${1-} == "--help" ]]; then
+  show_help "Usage: $(basename "$0")
+
+Refresh the shared Honcho image when the requested upstream source changed or
+when the local wrapper image recipe changed."
+fi
+
 if [[ $# -ne 0 ]]; then
   usage_error "$(basename "$0") takes no arguments"
 fi
@@ -19,14 +26,17 @@ if ! image_exists; then
 fi
 
 HONCHO_REF="$(resolve_honcho_ref)"
-export HONCHO_REF
+HONCHO_WRAPPER_FINGERPRINT="$(local_build_fingerprint)"
+export HONCHO_REF HONCHO_WRAPPER_FINGERPRINT
 CURRENT_REPO_URL="$(image_label honcho.repo_url)"
 CURRENT_REF="$(image_label honcho.ref)"
+CURRENT_BUILD_FINGERPRINT="$(current_image_build_fingerprint)"
 
-if [[ -n "$CURRENT_REPO_URL" && -n "$CURRENT_REF" && "$CURRENT_REPO_URL" == "$HONCHO_REPO_URL" && "$CURRENT_REF" == "$HONCHO_REF" ]]; then
+if [[ -n "$CURRENT_REPO_URL" && -n "$CURRENT_REF" && "$CURRENT_REPO_URL" == "$HONCHO_REPO_URL" && "$CURRENT_REF" == "$HONCHO_REF" && "$CURRENT_BUILD_FINGERPRINT" == "$HONCHO_WRAPPER_FINGERPRINT" ]]; then
   echo "==> Honcho image already matches requested source: $HONCHO_IMAGE_NAME"
   echo "==> Upstream repo: $CURRENT_REPO_URL"
   echo "==> Upstream ref:  $CURRENT_REF"
+  echo "==> Local build fingerprint: $HONCHO_WRAPPER_FINGERPRINT"
   echo "==> No upgrade needed"
   exit 0
 fi
@@ -35,10 +45,12 @@ echo "==> Upgrading Honcho image: $HONCHO_IMAGE_NAME"
 if [[ -n "$CURRENT_REPO_URL" || -n "$CURRENT_REF" ]]; then
   echo "==> Current upstream repo: ${CURRENT_REPO_URL:-unknown}"
   echo "==> Current upstream ref:  ${CURRENT_REF:-unknown}"
+  echo "==> Current build fingerprint: ${CURRENT_BUILD_FINGERPRINT:-unknown}"
 else
   echo "==> Current image metadata is missing; rebuilding to refresh version tracking"
 fi
 echo "==> Target upstream repo:  $HONCHO_REPO_URL"
 echo "==> Target upstream ref:   $HONCHO_REF"
+echo "==> Target build fingerprint: $HONCHO_WRAPPER_FINGERPRINT"
 podman image rm -f "$HONCHO_IMAGE_NAME" >/dev/null
 exec "$SCRIPT_DIR/honcho-build"

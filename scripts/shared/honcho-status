@@ -5,6 +5,12 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$ROOT/lib/shell/common.sh"
 
+if [[ ${1-} == "--help" ]]; then
+  show_help "Usage: $(basename "$0") <workspace-name>
+
+Show the Honcho stack status for one workspace and wait for the API healthcheck."
+fi
+
 if [[ $# -ne 1 ]]; then
   usage_error "$(basename "$0") requires exactly 1 argument: <workspace-name>"
 fi
@@ -15,17 +21,20 @@ require_python3
 
 resolve_workspace "$1"
 ensure_workspace_dirs
+migrate_legacy_workspace_layout
 if [[ -f "$HONCHO_ENV_FILE" ]]; then
-  load_env_file "$HONCHO_ENV_FILE"
+  load_runtime_env_file "$HONCHO_ENV_FILE"
 fi
 
+COMPOSE_ENV_FILE="$(mktemp)"
 COMPOSE_OVERRIDE_FILE="$(mktemp)"
-trap 'rm -f "$COMPOSE_OVERRIDE_FILE"' EXIT
+trap 'rm -f "$COMPOSE_ENV_FILE" "$COMPOSE_OVERRIDE_FILE"' EXIT
+create_compose_env_file "$COMPOSE_ENV_FILE" "$HONCHO_ENV_FILE"
 create_compose_override "$COMPOSE_OVERRIDE_FILE"
 
 print_summary
 echo "==> Services"
-run_compose "$COMPOSE_OVERRIDE_FILE" ps
+run_compose "$COMPOSE_ENV_FILE" "$COMPOSE_OVERRIDE_FILE" ps
 echo "==> Waiting for Honcho API"
 wait_for_api
 echo "==> Honcho API is healthy: $(honcho_api_url)"

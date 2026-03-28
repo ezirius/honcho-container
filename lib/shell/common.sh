@@ -22,6 +22,11 @@ usage_error() {
   exit 1
 }
 
+show_help() {
+  printf '%s\n' "$1"
+  exit 0
+}
+
 repo_root() {
   local script_dir
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -49,6 +54,33 @@ image_label() {
     value=""
   fi
   printf '%s' "$value"
+}
+
+local_build_fingerprint() {
+  require_python3
+
+  python3 - "$ROOT" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+paths = sorted(path for path in (root / "config/containers").rglob("*") if path.is_file())
+
+digest = hashlib.sha256()
+for path in paths:
+    relative = path.relative_to(root).as_posix()
+    digest.update(relative.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(path.read_bytes())
+    digest.update(b"\0")
+
+print(digest.hexdigest())
+PY
+}
+
+current_image_build_fingerprint() {
+  image_label honcho.wrapper_fingerprint
 }
 
 require_python3() {
@@ -134,17 +166,11 @@ require_workspace_root() {
 require_workspace_name() {
   local name="$1"
 
+  [[ -n "$name" ]] || fail "workspace name must not be empty"
   [[ "$name" != */* ]] || fail "workspace name must not contain path separators: $name"
   [[ "$name" != "." ]] || fail "workspace name must not be '.'"
   [[ "$name" != ".." ]] || fail "workspace name must not be '..'"
-}
-
-sanitize_name() {
-  local raw="$1"
-
-  printf '%s' "$raw" \
-    | tr '[:upper:]' '[:lower:]' \
-    | sed -E 's/[^a-z0-9_.-]+/-/g; s/^-+//; s/-+$//'
+  [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || fail "workspace name may only contain letters, numbers, dots, underscores, and hyphens"
 }
 
 normalize_path() {
@@ -235,48 +261,196 @@ resolve_workspace() {
   workspace_base_root="$(expand_home_path "$HONCHO_BASE_ROOT")"
   WORKSPACE_ROOT="$(normalize_absolute_path "$(normalize_path "$workspace_base_root")/$WORKSPACE_NAME")"
 
-  SAFE_WORKSPACE_NAME="$(sanitize_name "$WORKSPACE_NAME")"
-  [[ -n "$SAFE_WORKSPACE_NAME" ]] || fail "workspace name resolved to an empty project-safe name"
+  SAFE_WORKSPACE_NAME="$(printf '%s' "$WORKSPACE_NAME" | tr '[:upper:]' '[:lower:]')"
 
-  HONCHO_ENV_FILE="$WORKSPACE_ROOT/.env"
-  HONCHO_CONFIG_TOML="$WORKSPACE_ROOT/config.toml"
-  DATA_POSTGRES_DIR="$WORKSPACE_ROOT/postgres-data"
-  DATA_REDIS_DIR="$WORKSPACE_ROOT/redis-data"
+  HONCHO_HOME_DIR="$WORKSPACE_ROOT/honcho-home"
+  HONCHO_WORKSPACE_DIR="$WORKSPACE_ROOT/workspace"
+  HONCHO_ENV_FILE="$HONCHO_HOME_DIR/.env"
+  HONCHO_CONFIG_TOML="$HONCHO_HOME_DIR/config.toml"
+  DATA_POSTGRES_DIR="$HONCHO_HOME_DIR/postgres-data"
+  DATA_REDIS_DIR="$HONCHO_HOME_DIR/redis-data"
   HONCHO_PROJECT_NAME="${HONCHO_PROJECT_PREFIX}-${SAFE_WORKSPACE_NAME}-$(hash_workspace_path "$WORKSPACE_ROOT")"
 
   export WORKSPACE_INPUT WORKSPACE_ROOT WORKSPACE_NAME SAFE_WORKSPACE_NAME
-  export HONCHO_ENV_FILE HONCHO_CONFIG_TOML DATA_POSTGRES_DIR DATA_REDIS_DIR HONCHO_PROJECT_NAME
+  export HONCHO_HOME_DIR HONCHO_WORKSPACE_DIR HONCHO_ENV_FILE HONCHO_CONFIG_TOML DATA_POSTGRES_DIR DATA_REDIS_DIR HONCHO_PROJECT_NAME
 }
 
 ensure_workspace_dirs() {
-  mkdir -p "$WORKSPACE_ROOT" "$DATA_POSTGRES_DIR" "$DATA_REDIS_DIR"
+  mkdir -p "$WORKSPACE_ROOT" "$HONCHO_HOME_DIR" "$HONCHO_WORKSPACE_DIR" "$DATA_POSTGRES_DIR" "$DATA_REDIS_DIR"
 }
 
-load_env_file() {
+migrate_legacy_workspace_layout() {
+  local legacy_path
+  local target
+
+  for legacy_path in ".env" "config.toml" "postgres-data" "redis-data"; do
+    if [[ ! -e "$WORKSPACE_ROOT/$legacy_path" ]]; then
+      continue
+    fi
+
+    target="$HONCHO_HOME_DIR/$legacy_path"
+
+    if [[ -d "$WORKSPACE_ROOT/$legacy_path" ]]; then
+      mkdir -p "$target"
+      shopt -s dotglob nullglob
+      mv "$WORKSPACE_ROOT/$legacy_path"/* "$target"/ 2>/dev/null || true
+      shopt -u dotglob nullglob
+      rmdir "$WORKSPACE_ROOT/$legacy_path" 2>/dev/null || true
+      continue
+    fi
+
+    if [[ ! -e "$target" ]]; then
+      mv "$WORKSPACE_ROOT/$legacy_path" "$target"
+    fi
+  done
+}
+
+load_runtime_env_file() {
   local env_file="$1"
 
   [[ -f "$env_file" ]] || fail "env file not found: $env_file"
 
-  set -a
-  # shellcheck disable=SC1090
-  source "$env_file"
-  set +a
+  while IFS= read -r -d '' key && IFS= read -r -d '' value; do
+    case "$key" in
+      HONCHO_API_HOST_PORT)
+        HONCHO_API_HOST_PORT="$value"
+        ;;
+      HONCHO_DB_HOST_PORT)
+        HONCHO_DB_HOST_PORT="$value"
+        ;;
+      HONCHO_REDIS_HOST_PORT)
+        HONCHO_REDIS_HOST_PORT="$value"
+        ;;
+      HONCHO_REMOVE_VOLUMES)
+        HONCHO_REMOVE_VOLUMES="$value"
+        ;;
+    esac
+  done < <(python3 - "$env_file" <<'PY'
+import pathlib
+import re
+import sys
 
-  HONCHO_BASE_ROOT="${HONCHO_BASE_ROOT:-$HOME/Documents/Ezirius/.applications-data/Honcho}"
-  HONCHO_IMAGE_NAME="${HONCHO_IMAGE_NAME:-honcho-local}"
-  HONCHO_PROJECT_PREFIX="${HONCHO_PROJECT_PREFIX:-honcho}"
-  HONCHO_REPO_URL="${HONCHO_REPO_URL:-https://github.com/plastic-labs/honcho.git}"
-  HONCHO_REF="${HONCHO_REF:-latest-release}"
-  HONCHO_GITHUB_API_BASE="${HONCHO_GITHUB_API_BASE:-https://api.github.com}"
-  HONCHO_API_HOST_PORT="${HONCHO_API_HOST_PORT:-8000}"
-  HONCHO_DB_HOST_PORT="${HONCHO_DB_HOST_PORT:-}"
-  HONCHO_REDIS_HOST_PORT="${HONCHO_REDIS_HOST_PORT:-}"
-  HONCHO_REMOVE_VOLUMES="${HONCHO_REMOVE_VOLUMES:-0}"
+allowed = {
+    "HONCHO_API_HOST_PORT",
+    "HONCHO_DB_HOST_PORT",
+    "HONCHO_REDIS_HOST_PORT",
+    "HONCHO_REMOVE_VOLUMES",
+}
+
+for raw_line in pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+    line = raw_line.strip()
+    if not line or line.startswith("#"):
+        continue
+    if line.startswith("export "):
+        line = line[7:].lstrip()
+    if "=" not in line:
+        continue
+    key, value = line.split("=", 1)
+    key = key.strip()
+    if key not in allowed or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+        continue
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        value = value[1:-1]
+    sys.stdout.buffer.write(key.encode("utf-8") + b"\0" + value.encode("utf-8") + b"\0")
+PY
+)
 }
 
 ensure_required_runtime_env() {
-  [[ -n "${LLM_OPENAI_API_KEY:-}" || -n "${LLM_ANTHROPIC_API_KEY:-}" || -n "${LLM_GEMINI_API_KEY:-}" || -n "${LLM_GROQ_API_KEY:-}" ]] \
-    || fail "at least one LLM provider API key is required in $HONCHO_ENV_FILE"
+  if [[ -n "${LLM_OPENAI_API_KEY:-}" || -n "${LLM_ANTHROPIC_API_KEY:-}" || -n "${LLM_GEMINI_API_KEY:-}" || -n "${LLM_GROQ_API_KEY:-}" ]]; then
+    return 0
+  fi
+
+  python3 - "$HONCHO_ENV_FILE" <<'PY' >/dev/null || fail "at least one LLM provider API key is required in $HONCHO_ENV_FILE"
+import pathlib
+import re
+import sys
+
+keys = {
+    "LLM_OPENAI_API_KEY",
+    "LLM_ANTHROPIC_API_KEY",
+    "LLM_GEMINI_API_KEY",
+    "LLM_GROQ_API_KEY",
+}
+
+for raw_line in pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+    line = raw_line.strip()
+    if not line or line.startswith("#"):
+        continue
+    if line.startswith("export "):
+        line = line[7:].lstrip()
+    if "=" not in line:
+        continue
+    key, value = line.split("=", 1)
+    key = key.strip()
+    if key not in keys or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+        continue
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        value = value[1:-1]
+    if value:
+        raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+create_compose_env_file() {
+  local output_file="$1"
+  local source_file="$2"
+
+  {
+    printf 'HONCHO_IMAGE_NAME=%s\n' "$HONCHO_IMAGE_NAME"
+    printf 'HONCHO_REPO_URL=%s\n' "$HONCHO_REPO_URL"
+    printf 'HONCHO_REF=%s\n' "$HONCHO_REF"
+    printf 'HONCHO_API_HOST_PORT=%s\n' "$HONCHO_API_HOST_PORT"
+    printf 'HONCHO_DB_HOST_PORT=%s\n' "$HONCHO_DB_HOST_PORT"
+    printf 'HONCHO_REDIS_HOST_PORT=%s\n' "$HONCHO_REDIS_HOST_PORT"
+    printf 'DATA_POSTGRES_DIR=%s\n' "$DATA_POSTGRES_DIR"
+    printf 'DATA_REDIS_DIR=%s\n' "$DATA_REDIS_DIR"
+    if [[ -n "${HONCHO_WRAPPER_FINGERPRINT:-}" ]]; then
+      printf 'HONCHO_WRAPPER_FINGERPRINT=%s\n' "$HONCHO_WRAPPER_FINGERPRINT"
+    fi
+    if [[ -f "$source_file" ]]; then
+      python3 - "$source_file" <<'PY'
+import pathlib
+import re
+import sys
+
+excluded = {
+    "HONCHO_BASE_ROOT",
+    "HONCHO_IMAGE_NAME",
+    "HONCHO_PROJECT_PREFIX",
+    "HONCHO_REPO_URL",
+    "HONCHO_REF",
+    "HONCHO_GITHUB_API_BASE",
+    "DATA_POSTGRES_DIR",
+    "DATA_REDIS_DIR",
+    "HONCHO_WRAPPER_FINGERPRINT",
+}
+
+for raw_line in pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+    stripped = raw_line.strip()
+    if not stripped or stripped.startswith("#"):
+        print(raw_line)
+        continue
+    line = stripped
+    if line.startswith("export "):
+        line = line[7:].lstrip()
+    if "=" not in line:
+        print(raw_line)
+        continue
+    key = line.split("=", 1)[0].strip()
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+        print(raw_line)
+        continue
+    if key in excluded:
+        continue
+    print(raw_line)
+PY
+    fi
+  } > "$output_file"
 }
 
 compose_file_path() {
@@ -292,12 +466,16 @@ create_compose_override() {
 
   {
     printf '%s\n' 'services:'
+    printf '%s\n' '  api:'
+    printf '%s\n' '    volumes:'
+    printf '      - "%s:/workspace"\n' "$HONCHO_WORKSPACE_DIR"
     if [[ -f "$HONCHO_CONFIG_TOML" ]]; then
-      printf '%s\n' '  api:'
-      printf '%s\n' '    volumes:'
       printf '      - "%s:/app/config.toml:ro"\n' "$HONCHO_CONFIG_TOML"
-      printf '%s\n' '  deriver:'
-      printf '%s\n' '    volumes:'
+    fi
+    printf '%s\n' '  deriver:'
+    printf '%s\n' '    volumes:'
+    printf '      - "%s:/workspace"\n' "$HONCHO_WORKSPACE_DIR"
+    if [[ -f "$HONCHO_CONFIG_TOML" ]]; then
       printf '      - "%s:/app/config.toml:ro"\n' "$HONCHO_CONFIG_TOML"
     fi
     if [[ -n "$HONCHO_DB_HOST_PORT" ]]; then
@@ -314,9 +492,17 @@ create_compose_override() {
 }
 
 run_compose() {
-  local override_file="$1"
+  local env_file="$1"
+  local override_file="$2"
   shift
-  local -a cmd=(podman compose -p "$HONCHO_PROJECT_NAME" -f "$(compose_file_path)")
+  shift
+  local -a cmd=(podman compose -p "$HONCHO_PROJECT_NAME")
+
+  if [[ -f "$env_file" ]]; then
+    cmd+=(--env-file "$env_file")
+  fi
+
+  cmd+=( -f "$(compose_file_path)" )
 
   if [[ -f "$override_file" ]]; then
     cmd+=( -f "$override_file" )
@@ -324,6 +510,25 @@ run_compose() {
 
   cmd+=( "$@" )
   "${cmd[@]}"
+}
+
+stack_status_output() {
+  local env_file="$1"
+  local override_file="$2"
+
+  run_compose "$env_file" "$override_file" ps 2>/dev/null || true
+}
+
+stack_has_running_services() {
+  local status_output="$1"
+
+  [[ "$status_output" == *running* || "$status_output" == *Up* ]]
+}
+
+stack_has_known_services() {
+  local status_output="$1"
+
+  [[ "$status_output" == *api* || "$status_output" == *deriver* || "$status_output" == *database* || "$status_output" == *redis* ]]
 }
 
 honcho_api_url() {
@@ -359,6 +564,8 @@ PY
 print_summary() {
   echo "==> Workspace arg:   $WORKSPACE_INPUT"
   echo "==> Workspace root:  $WORKSPACE_ROOT"
+  echo "==> Honcho home:     $HONCHO_HOME_DIR"
+  echo "==> Workspace dir:   $HONCHO_WORKSPACE_DIR"
   echo "==> Env file:        $HONCHO_ENV_FILE"
   echo "==> Config TOML:     ${HONCHO_CONFIG_TOML}"
   echo "==> Postgres data:   $DATA_POSTGRES_DIR"

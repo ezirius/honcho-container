@@ -5,6 +5,22 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$ROOT/lib/shell/common.sh"
 
+if [[ ${1-} == "--help" ]]; then
+  show_help "Usage: $(basename "$0") <workspace-name>
+
+Start or reuse the Honcho stack for one workspace.
+
+Arguments:
+- <workspace-name>           required workspace name under HONCHO_BASE_ROOT
+
+The wrapper expects:
+- <workspace>/honcho-home/.env
+- <workspace>/honcho-home/config.toml        optional
+- <workspace>/honcho-home/postgres-data
+- <workspace>/honcho-home/redis-data
+- <workspace>/workspace"
+fi
+
 if [[ $# -ne 1 ]]; then
   usage_error "$(basename "$0") requires exactly 1 argument: <workspace-name>"
 fi
@@ -14,14 +30,28 @@ require_podman_compose
 
 resolve_workspace "$1"
 ensure_workspace_dirs
-load_env_file "$HONCHO_ENV_FILE"
+migrate_legacy_workspace_layout
+load_runtime_env_file "$HONCHO_ENV_FILE"
 ensure_required_runtime_env
 
+COMPOSE_ENV_FILE="$(mktemp)"
 COMPOSE_OVERRIDE_FILE="$(mktemp)"
-trap 'rm -f "$COMPOSE_OVERRIDE_FILE"' EXIT
+trap 'rm -f "$COMPOSE_ENV_FILE" "$COMPOSE_OVERRIDE_FILE"' EXIT
+create_compose_env_file "$COMPOSE_ENV_FILE" "$HONCHO_ENV_FILE"
 create_compose_override "$COMPOSE_OVERRIDE_FILE"
+CURRENT_STATUS="$(stack_status_output "$COMPOSE_ENV_FILE" "$COMPOSE_OVERRIDE_FILE")"
 
 print_summary
-echo "==> Starting Honcho stack"
-run_compose "$COMPOSE_OVERRIDE_FILE" up -d database redis api deriver
+if stack_has_running_services "$CURRENT_STATUS"; then
+  echo "==> Honcho stack already running: $HONCHO_PROJECT_NAME"
+  exit 0
+fi
+
+if stack_has_known_services "$CURRENT_STATUS"; then
+  echo "==> Starting existing stopped Honcho stack: $HONCHO_PROJECT_NAME"
+else
+  echo "==> Starting Honcho stack"
+fi
+
+run_compose "$COMPOSE_ENV_FILE" "$COMPOSE_OVERRIDE_FILE" up -d database redis api deriver
 echo "==> Honcho stack started"

@@ -5,6 +5,16 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$ROOT/lib/shell/common.sh"
 
+if [[ ${1-} == "--help" ]]; then
+  show_help "Usage: $(basename "$0") <workspace-name>
+
+Start the full Honcho flow for one workspace:
+- ensure the shared image exists
+- refresh it if the requested upstream release changed or the local wrapper image recipe changed
+- start or reuse the workspace stack
+- wait for the API to become healthy and print the local access details"
+fi
+
 if [[ $# -ne 1 ]]; then
   usage_error "$(basename "$0") requires exactly 1 argument: <workspace-name>"
 fi

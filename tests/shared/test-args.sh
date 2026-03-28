@@ -53,4 +53,35 @@ if "$ROOT/scripts/shared/honcho-logs" >/dev/null 2> "$TMPDIR/honcho-logs.err"; t
 fi
 assert_contains "$TMPDIR/honcho-logs.err" 'requires at least 1 argument' 'honcho-logs reports missing workspace clearly'
 
+HELP_FILE="$TMPDIR/help.out"
+
+"$ROOT/scripts/shared/bootstrap" --help > "$HELP_FILE"
+assert_contains "$HELP_FILE" 'local wrapper image recipe changed' 'bootstrap help documents local rebuild triggers'
+assert_contains "$HELP_FILE" 'print the local access details' 'bootstrap help documents status step'
+
+"$ROOT/scripts/shared/honcho-build" --help > "$HELP_FILE"
+assert_contains "$HELP_FILE" 'Ensure the shared Honcho image exists.' 'build help is available'
+
+"$ROOT/scripts/shared/honcho-upgrade" --help > "$HELP_FILE"
+assert_contains "$HELP_FILE" 'local wrapper image recipe changed' 'upgrade help documents wrapper fingerprint rebuilds'
+
+"$ROOT/scripts/shared/honcho-start" --help > "$HELP_FILE"
+assert_contains "$HELP_FILE" 'honcho-home/.env' 'start help documents honcho-home env path'
+assert_contains "$HELP_FILE" 'workspace' 'start help documents workspace directory'
+
+"$ROOT/scripts/shared/honcho-status" --help > "$HELP_FILE"
+assert_contains "$HELP_FILE" 'Show the Honcho stack status' 'status help is available'
+
+"$ROOT/scripts/shared/honcho-logs" --help > "$HELP_FILE"
+assert_contains "$HELP_FILE" 'Common compose log args:' 'logs help documents compose log args'
+
+"$ROOT/scripts/shared/honcho-shell" --help > "$HELP_FILE"
+assert_contains "$HELP_FILE" 'Open an interactive shell in the Honcho api service container' 'shell help is available'
+
+"$ROOT/scripts/shared/honcho-stop" --help > "$HELP_FILE"
+assert_contains "$HELP_FILE" 'Stop the Honcho stack' 'stop help is available'
+
+"$ROOT/scripts/shared/honcho-remove" --help > "$HELP_FILE"
+assert_contains "$HELP_FILE" 'HONCHO_REMOVE_VOLUMES=1' 'remove help documents volume removal'
+
 echo "Argument contract checks passed"
