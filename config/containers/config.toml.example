@@ -31,9 +31,38 @@ ENABLED = true
 PROVIDER = "google"
 MODEL = "gemini-2.5-flash"
 
-# Upstream defaults also use Anthropic models outside this reduced local example:
-# - claude-haiku-4-5 for higher dialectic levels and specialist reasoning
-# - claude-sonnet-4-20250514 for dreaming
+[dialectic.levels.minimal]
+PROVIDER = "google"
+MODEL = "gemini-2.5-flash-lite"
+
+[dialectic.levels.low]
+PROVIDER = "google"
+MODEL = "gemini-2.5-flash-lite"
+
+[dialectic.levels.medium]
+PROVIDER = "anthropic"
+MODEL = "claude-haiku-4-5"
+
+[dialectic.levels.high]
+PROVIDER = "anthropic"
+MODEL = "claude-haiku-4-5"
+
+[dialectic.levels.max]
+PROVIDER = "anthropic"
+MODEL = "claude-haiku-4-5"
+
+[dream]
+ENABLED = true
+# Default upstream dream model: claude-sonnet-4-20250514
+PROVIDER = "anthropic"
+MODEL = "claude-sonnet-4-20250514"
+DEDUCTION_MODEL = "claude-haiku-4-5"
+INDUCTION_MODEL = "claude-haiku-4-5"
+
+# This example now mirrors the broader upstream v3.0.3 recommendations:
+# - OpenAI for embeddings -> text-embedding-3-small
+# - Gemini for deriver and summaries -> gemini-2.5-flash-lite and gemini-2.5-flash
+# - Anthropic for higher dialectic levels and dreaming -> claude-haiku-4-5 and claude-sonnet-4-20250514
 
 [vector_store]
 TYPE = "pgvector"
