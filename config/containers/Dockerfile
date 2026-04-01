@@ -19,14 +19,37 @@ ENV PYTHONUNBUFFERED=1
 ENV PATH="/app/.venv/bin:$PATH"
 ENV HOME=/app
 ENV UV_CACHE_DIR=/tmp/uv-cache
+ENV UV_HTTP_TIMEOUT=120
+ENV UV_HTTP_RETRIES=5
 
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates build-essential \
-  && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+  for attempt in 1 2 3; do \
+    apt-get update \
+      && apt-get install -y --no-install-recommends git ca-certificates build-essential \
+      && break; \
+    if [ "$attempt" -eq 3 ]; then \
+      exit 1; \
+    fi; \
+    rm -rf /var/lib/apt/lists/*; \
+    sleep 5; \
+  done; \
+  rm -rf /var/lib/apt/lists/*
 
-RUN git clone --depth 1 --branch "$HONCHO_REF" "$HONCHO_REPO_URL" /app
+RUN set -eux; \
+  git init /app; \
+  git -C /app remote add origin "$HONCHO_REPO_URL"; \
+  git -C /app fetch --depth 1 origin "$HONCHO_REF"; \
+  git -C /app checkout --detach FETCH_HEAD
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-  uv sync --frozen --no-group dev
+  set -eux; \
+  for attempt in 1 2 3; do \
+    uv sync --frozen --no-group dev && break; \
+    if [ "$attempt" -eq 3 ]; then \
+      exit 1; \
+    fi; \
+    sleep 5; \
+  done
 
 RUN addgroup --system app \
   && adduser --system --group app \

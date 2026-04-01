@@ -1,21 +1,34 @@
 # Honcho container usage
 
+The wrapper aims to stay close to the latest upstream Honcho release or tag baseline rather than `main`.
+At present, the latest validated upstream baseline is `v3.0.3`.
+
+Upstream already provides the standard self-hosted Docker and compose path. This repo is the multi-workspace wrapper layer.
+
+Use upstream Docker or compose directly when you want one standard Honcho deployment with upstream defaults.
+
+Use this wrapper when you want named workspaces, Podman-first operation, wrapper-managed release tracking, a dedicated `/workspace` mount, or a destructive fresh wrapper test lane.
+
 ## Workflow
 
 Recommended one-step workflow:
 
-1. Create the workspace directory and copy the env template into `honcho-home`:
+1. Create the workspace directory and copy the workspace runtime env template into `honcho-home`:
    `mkdir -p "$HONCHO_BASE_ROOT/ezirius/honcho-home" "$HONCHO_BASE_ROOT/ezirius/workspace" && cp config/containers/.env.template "$HONCHO_BASE_ROOT/ezirius/honcho-home/.env"`
 2. Add your LLM provider keys to the workspace `.env`
+   - If you set `AUTH_USE_AUTH=true`, you must also set `AUTH_JWT_SECRET`.
+   - The wrapper's host-side helper scripts require `python3`.
 3. Start the local Honcho stack for a workspace:
    `./scripts/shared/bootstrap ezirius`
 
 `bootstrap` runs `honcho-build`, then `honcho-upgrade`, then `honcho-start`, then waits for the API to become healthy and prints the local access details.
 
+`bootstrap-test` is the destructive fresh wrapper test path: it removes the previous dedicated `test` workspace stack and `honcho-local-test` image if they exist, recreates the `test` workspace from the local examples, and then builds, starts, and verifies the stack again from scratch.
+
 If the workspace stack is already running, `honcho-start` reports that and leaves it alone. If it exists but is stopped, `honcho-start` starts it again with `compose up -d`. If it does not exist yet, `honcho-start` creates it.
 
 `honcho-build` is intentionally workspace-independent so the local wrapper stays thin and the shared image stays close to upstream Honcho.
-By default it resolves the latest upstream Honcho GitHub release and fails clearly if no upstream release is available.
+By default it resolves the latest upstream Honcho GitHub release and falls back to the latest upstream tag if no release entry exists.
 That automatic `latest-release` resolution currently expects `HONCHO_REPO_URL` to point at a GitHub repository URL.
 `honcho-upgrade` also compares a local wrapper build fingerprint so Dockerfile and Compose image-recipe changes trigger a rebuild even when the upstream Honcho ref stays the same.
 In practice, repeated `bootstrap` runs are the normal maintenance path: `honcho-build` is no-op when the image exists, while `honcho-upgrade` re-checks both the upstream source and the local wrapper image recipe before deciding whether to rebuild.
@@ -47,6 +60,7 @@ Container mounts are:
 - `honcho-home/redis-data/` -> `/data`
 - `workspace/` -> `/workspace` for `api` and `deriver`
 - `honcho-home/.env` is consumed as Compose/service runtime data, not sourced into the wrapper shell
+- wrapper-control examples live in `config/containers/wrapper.env.example`, not in the workspace runtime template
 
 ## Services
 
@@ -78,7 +92,7 @@ If you set `HONCHO_DB_HOST_PORT` or `HONCHO_REDIS_HOST_PORT`, those services are
 - `HONCHO_REF`
   - upstream branch or tag to build from
   - default: `latest-release`
-  - `latest-release` resolves the latest upstream Honcho release tag and fails clearly if no release entry is available
+  - `latest-release` resolves the latest upstream Honcho release tag and falls back to the latest upstream tag if no release entry exists
   - `honcho-upgrade` re-checks this and rebuilds when either the requested upstream source or the local wrapper image recipe changed
 - `HONCHO_GITHUB_API_BASE`
   - GitHub API base used to resolve `latest-release`
@@ -103,6 +117,7 @@ If you set `HONCHO_DB_HOST_PORT` or `HONCHO_REDIS_HOST_PORT`, those services are
 
 - `./scripts/shared/honcho-build`
 - `./scripts/shared/honcho-upgrade`
+- `./scripts/shared/bootstrap-test`
 - `./scripts/shared/honcho-start <workspace-name>`
 - `./scripts/shared/honcho-status <workspace-name>`
 - `./scripts/shared/honcho-logs <workspace-name> [compose log args...]`
@@ -125,9 +140,11 @@ All wrapper scripts support `--help` and document their argument contracts there
 - `api`, `deriver`, `database`, and `redis` all use restart policy `unless-stopped`, so crashes and host reboots recover automatically while a manual stop stays stopped.
 - Editing `honcho-home/.env` or `honcho-home/config.toml` does not require an image rebuild; a stack stop/start is enough to apply those runtime changes.
 - Workspace env values do not override wrapper control vars such as image name, base root, or upstream repo/ref selection.
-- `ensure_required_runtime_env()` only requires at least one provider API key, but the default upstream Honcho configuration typically uses:
+- `ensure_required_runtime_env()` supports the wrapper's recommended upstream provider-key subset plus OpenAI-compatible and vLLM API-key paths, but this repo's local `config.toml.example` remains a curated wrapper-oriented subset aligned to upstream `v3.0.3` defaults where practical:
   - OpenAI -> `text-embedding-3-small` for embeddings
-  - Gemini -> `gemini-2.5-flash-lite` for deriver and lower dialectic levels, plus `gemini-2.5-flash` for summaries
-  - Anthropic -> `claude-haiku-4-5` for higher dialectic levels and specialist reasoning, plus `claude-sonnet-4-20250514` for dreaming
-- If you keep those defaults, you will usually want OpenAI, Gemini, and Anthropic API keys. If you change the providers in your config, fewer keys can be enough.
+  - Gemini -> `gemini-2.5-flash-lite` for deriver
+  - Gemini -> `gemini-2.5-flash` for summaries
+  - Anthropic -> `claude-haiku-4-5` for medium/high/max dialectic and dream specialists
+  - Anthropic -> `claude-sonnet-4-20250514` for dreaming
+- If you keep that recommended config, OpenAI, Gemini, and Anthropic keys are usually all needed. Groq remains supported, but it is optional for this setup.
 - Apps and SDKs normally connect to local Honcho at `http://localhost:8000`, while the Claude Code Honcho plugin documents local mode as `http://localhost:8000/v3`.

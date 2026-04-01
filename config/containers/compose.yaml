@@ -11,7 +11,7 @@ services:
     entrypoint:
       - /bin/sh
       - -lc
-      - python scripts/provision_db.py && exec fastapi run --host 0.0.0.0 src/main.py
+      - /app/.venv/bin/python scripts/provision_db.py && exec /app/.venv/bin/fastapi run --host 0.0.0.0 src/main.py
     depends_on:
       database:
         condition: service_healthy
@@ -49,7 +49,7 @@ services:
         HONCHO_REF: ${HONCHO_REF:-latest-release}
         HONCHO_WRAPPER_FINGERPRINT: ${HONCHO_WRAPPER_FINGERPRINT:-}
     entrypoint:
-      - python
+      - /app/.venv/bin/python
       - -m
       - src.deriver
     depends_on:

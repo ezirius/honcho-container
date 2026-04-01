@@ -4,6 +4,29 @@ This repository builds and manages a local self-hosted Honcho stack with Podman 
 
 Honcho itself runs locally in containers, while LLM calls still use remote provider APIs configured through environment variables.
 
+The wrapper aims to stay close to the latest upstream Honcho release or tag baseline rather than `main`.
+At present, the latest validated upstream baseline is `v3.0.3`.
+
+Upstream already provides the standard self-hosted Docker and compose path. This repo exists to add:
+
+- named wrapper workspaces
+- Podman-first lifecycle commands
+- release tracking with local rebuild fingerprinting
+- a dedicated mounted `/workspace` path alongside Honcho service state
+- a destructive fresh test lane for wrapper verification
+
+## When to use this wrapper
+
+Use upstream Docker or compose directly when you want one standard Honcho deployment with upstream defaults.
+
+Use this wrapper when you want:
+
+- multiple named workspaces on one host
+- Podman-first operation
+- wrapper-managed upgrade and rebuild behaviour
+- a dedicated host `/workspace` mount for the `api` and `deriver` services
+- a repeatable fresh test lane through `bootstrap-test`
+
 ## Layout
 
 - `config/containers/` contains the Honcho image build, compose stack, env template, config example, and database init SQL
@@ -14,7 +37,9 @@ Honcho itself runs locally in containers, while LLM calls still use remote provi
 
 ## Quickstart
 
-1. Create the workspace directory, copy the env template into `honcho-home`, and add your LLM API keys:
+1. Create the workspace directory, copy the workspace runtime env template into `honcho-home`, and add the provider settings needed for that workspace:
+
+   The wrapper's host-side helper scripts require `python3`.
 
    `mkdir -p "$HOME/Documents/Ezirius/.applications-data/Honcho/ezirius/honcho-home" "$HOME/Documents/Ezirius/.applications-data/Honcho/ezirius/workspace" && cp config/containers/.env.template "$HOME/Documents/Ezirius/.applications-data/Honcho/ezirius/honcho-home/.env"`
 
@@ -22,7 +47,11 @@ Honcho itself runs locally in containers, while LLM calls still use remote provi
 
    `./scripts/shared/bootstrap ezirius`
 
-`bootstrap` builds the shared local Honcho image from the latest upstream GitHub release by default, upgrades it if the requested upstream source changed or the local wrapper image recipe changed, starts the stack for the selected workspace, waits for the API to become healthy, and then prints the local access details.
+`bootstrap` builds the shared local Honcho image from the latest upstream GitHub release by default, falling back to the latest upstream tag when no release entry exists. It upgrades the image if the requested upstream source changed or the local wrapper image recipe changed, starts the stack for the selected workspace, waits for the API to become healthy, and then prints the local access details.
+
+For a destructive fresh wrapper verification lane against the dedicated `test` workspace and `honcho-local-test` image, run:
+
+`./scripts/shared/bootstrap-test`
 
 ## Workspace layout
 
@@ -58,6 +87,8 @@ The runtime mounts are:
 
 The wrapper keeps its own control-plane settings outside the workspace env file. The workspace `honcho-home/.env` is treated as runtime data for Compose and the Honcho services, so values there do not override wrapper image selection, repo/ref tracking, or base-root resolution.
 
+Wrapper-control examples such as `HONCHO_BASE_ROOT`, `HONCHO_REPO_URL`, `HONCHO_REF`, `HONCHO_IMAGE_NAME`, and `HONCHO_PROJECT_PREFIX` now live in `config/containers/wrapper.env.example` rather than the workspace runtime template.
+
 ## Services
 
 The default local stack includes:
@@ -86,7 +117,7 @@ If you set `HONCHO_DB_HOST_PORT` or `HONCHO_REDIS_HOST_PORT`, those services are
 - `honcho-upgrade` rebuilds the shared image when the requested upstream source changed or when the local wrapper image recipe changed
 - `honcho-start` starts or reuses the local stack only
 - `bootstrap` performs the full `build -> upgrade -> start -> health check` flow
-- by default, `honcho-build` and `honcho-upgrade` resolve the latest upstream Honcho release tag and fail clearly if no upstream release is available
+- by default, `honcho-build` and `honcho-upgrade` resolve the latest upstream Honcho release tag and fall back to the latest upstream tag if the repo has no release entry
 - in practice, repeated `bootstrap` runs are the normal way to stay current: `honcho-build` is no-op when the image exists, while `honcho-upgrade` re-checks both the upstream release and the local wrapper build fingerprint before deciding whether to rebuild
 - `api`, `deriver`, `database`, and `redis` all use restart policy `unless-stopped`, so crashes and host reboots recover automatically while a manual stop remains stopped
 
@@ -104,6 +135,7 @@ Because the stack is workspace-scoped, the runtime scripts use a workspace name 
 
 - `./scripts/shared/honcho-build`
 - `./scripts/shared/honcho-upgrade`
+- `./scripts/shared/bootstrap-test`
 - `./scripts/shared/honcho-start <workspace-name>`
 - `./scripts/shared/honcho-status <workspace-name>`
 - `./scripts/shared/honcho-logs <workspace-name> [compose log args...]`
@@ -133,7 +165,7 @@ After that, test SSH auth with:
 
 `honcho-remove` preserves workspace data directories by default.
 
-The scripts create the workspace root, `honcho-home`, `workspace`, `postgres-data`, and `redis-data` directories automatically. You still need to create the workspace env file yourself at `honcho-home/.env`.
+The scripts create the workspace root, `honcho-home`, `workspace`, `postgres-data`, and `redis-data` directories automatically. You still need to create the workspace env file yourself at `honcho-home/.env` and should usually copy `config/containers/config.toml.example` to `honcho-home/config.toml`.
 
 In practice that means:
 
@@ -141,19 +173,28 @@ In practice that means:
 - stopping and starting the stack is enough for Compose and the Honcho services to pick up the updated runtime config
 - rebuilding is only needed when the requested upstream Honcho source changed or when the local wrapper image recipe changed
 
-The stack requires at least one provider API key to start, but the default upstream Honcho configuration typically uses:
+The repo's recommended config example is a curated wrapper-oriented subset aligned to upstream `v3.0.3` defaults where practical:
 
 - OpenAI for embeddings -> `text-embedding-3-small`
-- Google Gemini for deriver and summary -> `gemini-2.5-flash-lite` and `gemini-2.5-flash`
-- Anthropic for higher-level dialectic and dreaming -> `claude-haiku-4-5` and `claude-sonnet-4-20250514`
+- Google Gemini for deriver -> `gemini-2.5-flash-lite`
+- Google Gemini for summary -> `gemini-2.5-flash`
+- Anthropic for higher dialectic levels -> `claude-haiku-4-5`
+- Anthropic for dreaming -> `claude-sonnet-4-20250514`
+- Anthropic for dream specialists -> `claude-haiku-4-5`
 
-If you keep those defaults, you will usually want all three provider keys.
+If you keep that recommended config, you will usually want:
 
-Where more than one default model exists for a provider, the rough preference is:
+- OpenAI key
+- Gemini key
+- Anthropic key
 
-- OpenAI: embeddings only by default
-- Gemini: lighter day-to-day background work first (`gemini-2.5-flash-lite`), then richer summaries (`gemini-2.5-flash`)
-- Anthropic: `claude-haiku-4-5` for medium/high/max dialectic and specialist reasoning, `claude-sonnet-4-20250514` for dreaming
+Groq remains supported, but it is optional for this recommended setup. Additional upstream `v3.0.3` provider paths such as OpenAI-compatible and vLLM are also supported by the wrapper runtime path even though they are not the main recommended subset shown here.
+
+Where more than one recommended model exists for a provider, the rough preference is:
+
+- OpenAI: `text-embedding-3-small`
+- Gemini: `gemini-2.5-flash-lite` first for deriver, then `gemini-2.5-flash` for summaries
+- Anthropic: `claude-haiku-4-5` for medium/high/max dialectic and dream specialists, `claude-sonnet-4-20250514` for dreaming
 
 To remove the service data directories for Postgres and Redis as well, set:
 

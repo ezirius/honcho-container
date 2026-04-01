@@ -34,6 +34,7 @@ assert_rejects_unexpected_args() {
 
 assert_rejects_unexpected_args "$ROOT/scripts/shared/honcho-build" 'unexpected argument' 'takes no arguments' unexpected
 assert_rejects_unexpected_args "$ROOT/scripts/shared/honcho-upgrade" 'unexpected argument' 'takes no arguments' unexpected
+assert_rejects_unexpected_args "$ROOT/scripts/shared/bootstrap-test" 'unexpected argument' 'takes no arguments' unexpected
 assert_rejects_unexpected_args "$ROOT/scripts/shared/bootstrap" 'missing workspace' 'requires exactly 1 argument'
 assert_rejects_unexpected_args "$ROOT/scripts/shared/bootstrap" 'extra argument' 'requires exactly 1 argument' one two
 assert_rejects_unexpected_args "$ROOT/scripts/shared/honcho-start" 'missing workspace' 'requires exactly 1 argument'
@@ -56,32 +57,46 @@ assert_contains "$TMPDIR/honcho-logs.err" 'requires at least 1 argument' 'honcho
 HELP_FILE="$TMPDIR/help.out"
 
 "$ROOT/scripts/shared/bootstrap" --help > "$HELP_FILE"
-assert_contains "$HELP_FILE" 'local wrapper image recipe changed' 'bootstrap help documents local rebuild triggers'
-assert_contains "$HELP_FILE" 'print the local access details' 'bootstrap help documents status step'
+assert_contains "$HELP_FILE" 'Usage:' 'bootstrap help has usage header'
+assert_contains "$HELP_FILE" '<workspace-name>' 'bootstrap help documents workspace argument'
 
 "$ROOT/scripts/shared/honcho-build" --help > "$HELP_FILE"
-assert_contains "$HELP_FILE" 'Ensure the shared Honcho image exists.' 'build help is available'
+assert_contains "$HELP_FILE" 'Usage:' 'build help has usage header'
+assert_contains "$HELP_FILE" 'shared Honcho image' 'build help describes image purpose'
+
+"$ROOT/scripts/shared/bootstrap-test" --help > "$HELP_FILE"
+assert_contains "$HELP_FILE" 'Usage:' 'bootstrap-test help has usage header'
+assert_contains "$HELP_FILE" 'dedicated test workspace' 'bootstrap-test help describes the test lane'
+assert_contains "$HELP_FILE" 'LLM_OPENAI_API_KEY' 'bootstrap-test help documents required provider keys'
 
 "$ROOT/scripts/shared/honcho-upgrade" --help > "$HELP_FILE"
-assert_contains "$HELP_FILE" 'local wrapper image recipe changed' 'upgrade help documents wrapper fingerprint rebuilds'
+assert_contains "$HELP_FILE" 'Usage:' 'upgrade help has usage header'
+assert_contains "$HELP_FILE" 'Refresh the shared Honcho image' 'upgrade help describes upgrade purpose'
 
 "$ROOT/scripts/shared/honcho-start" --help > "$HELP_FILE"
+assert_contains "$HELP_FILE" 'Usage:' 'start help has usage header'
+assert_contains "$HELP_FILE" '<workspace-name>' 'start help documents workspace argument'
 assert_contains "$HELP_FILE" 'honcho-home/.env' 'start help documents honcho-home env path'
-assert_contains "$HELP_FILE" 'workspace' 'start help documents workspace directory'
 
 "$ROOT/scripts/shared/honcho-status" --help > "$HELP_FILE"
-assert_contains "$HELP_FILE" 'Show the Honcho stack status' 'status help is available'
+assert_contains "$HELP_FILE" 'Usage:' 'status help has usage header'
+assert_contains "$HELP_FILE" 'current Honcho stack status' 'status help describes status purpose'
 
 "$ROOT/scripts/shared/honcho-logs" --help > "$HELP_FILE"
+assert_contains "$HELP_FILE" 'Usage:' 'logs help has usage header'
 assert_contains "$HELP_FILE" 'Common compose log args:' 'logs help documents compose log args'
+assert_contains "$HELP_FILE" 'snapshot of the current logs' 'logs help documents default snapshot mode'
 
 "$ROOT/scripts/shared/honcho-shell" --help > "$HELP_FILE"
-assert_contains "$HELP_FILE" 'Open an interactive shell in the Honcho api service container' 'shell help is available'
+assert_contains "$HELP_FILE" 'Usage:' 'shell help has usage header'
+assert_contains "$HELP_FILE" 'interactive shell' 'shell help describes shell purpose'
 
 "$ROOT/scripts/shared/honcho-stop" --help > "$HELP_FILE"
-assert_contains "$HELP_FILE" 'Stop the Honcho stack' 'stop help is available'
+assert_contains "$HELP_FILE" 'Usage:' 'stop help has usage header'
+assert_contains "$HELP_FILE" 'Stop the Honcho stack' 'stop help describes stop purpose'
 
 "$ROOT/scripts/shared/honcho-remove" --help > "$HELP_FILE"
+assert_contains "$HELP_FILE" 'Usage:' 'remove help has usage header'
 assert_contains "$HELP_FILE" 'HONCHO_REMOVE_VOLUMES=1' 'remove help documents volume removal'
 
 echo "Argument contract checks passed"

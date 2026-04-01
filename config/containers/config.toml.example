@@ -1,3 +1,7 @@
+# Curated wrapper-oriented subset of upstream Honcho v3.0.3 configuration.
+# This is not a full mirror of upstream config.toml.example.
+# Use it as a recommended local starting point and consult the upstream tagged release for the broader config surface.
+
 [app]
 LOG_LEVEL = "INFO"
 NAMESPACE = "honcho"
@@ -8,7 +12,8 @@ SCHEMA = "public"
 POOL_PRE_PING = true
 
 [auth]
-USE_AUTH = false
+USE_AUTH=false
+# JWT_SECRET = "your-jwt-secret-here"  # required when USE_AUTH = true
 
 [cache]
 ENABLED = true
@@ -34,22 +39,33 @@ MODEL = "gemini-2.5-flash"
 [dialectic.levels.minimal]
 PROVIDER = "google"
 MODEL = "gemini-2.5-flash-lite"
+THINKING_BUDGET_TOKENS = 0
+MAX_TOOL_ITERATIONS = 1
+MAX_OUTPUT_TOKENS = 250
 
 [dialectic.levels.low]
 PROVIDER = "google"
 MODEL = "gemini-2.5-flash-lite"
+THINKING_BUDGET_TOKENS = 0
+MAX_TOOL_ITERATIONS = 5
 
 [dialectic.levels.medium]
 PROVIDER = "anthropic"
 MODEL = "claude-haiku-4-5"
+THINKING_BUDGET_TOKENS = 1024
+MAX_TOOL_ITERATIONS = 2
 
 [dialectic.levels.high]
 PROVIDER = "anthropic"
 MODEL = "claude-haiku-4-5"
+THINKING_BUDGET_TOKENS = 1024
+MAX_TOOL_ITERATIONS = 4
 
 [dialectic.levels.max]
 PROVIDER = "anthropic"
 MODEL = "claude-haiku-4-5"
+THINKING_BUDGET_TOKENS = 2048
+MAX_TOOL_ITERATIONS = 10
 
 [dream]
 ENABLED = true

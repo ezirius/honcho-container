@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-HONCHO_BASE_ROOT="${HONCHO_BASE_ROOT:-$HOME/Documents/Ezirius/.applications-data/Honcho}"
+HONCHO_BASE_ROOT="${HONCHO_BASE_ROOT:-~/Documents/Ezirius/.applications-data/Honcho}"
 HONCHO_IMAGE_NAME="${HONCHO_IMAGE_NAME:-honcho-local}"
 HONCHO_PROJECT_PREFIX="${HONCHO_PROJECT_PREFIX:-honcho}"
 HONCHO_REPO_URL="${HONCHO_REPO_URL:-https://github.com/plastic-labs/honcho.git}"
@@ -87,6 +87,10 @@ require_python3() {
   command -v python3 >/dev/null 2>&1 || fail "python3 is required"
 }
 
+require_python_runtime_validation() {
+  require_python3
+}
+
 github_repo_slug() {
   local repo_url="$1"
 
@@ -132,6 +136,7 @@ import urllib.request
 base = os.environ.get("HONCHO_GITHUB_API_BASE", "https://api.github.com").rstrip("/")
 repo_slug = os.environ["HONCHO_REPO_SLUG"].strip("/")
 latest_url = f"{base}/repos/{repo_slug}/releases/latest"
+tags_url = f"{base}/repos/{repo_slug}/tags?per_page=1"
 headers = {
     "Accept": "application/vnd.github+json",
     "User-Agent": "honcho-container/1.0",
@@ -149,13 +154,26 @@ try:
         print(tag_name)
         sys.exit(0)
 except urllib.error.HTTPError as exc:
+    if exc.code != 404:
+        raise SystemExit(f"failed to resolve latest upstream Honcho release: HTTP {exc.code}")
+except urllib.error.URLError as exc:
+    raise SystemExit(f"failed to resolve latest upstream Honcho release: {exc.reason}")
+
+try:
+    tags = fetch_json(tags_url)
+    if isinstance(tags, list) and tags:
+        tag_name = tags[0].get("name", "")
+        if tag_name:
+            print(tag_name)
+            sys.exit(0)
+except urllib.error.HTTPError as exc:
     if exc.code == 404:
-        raise SystemExit("Latest upstream Honcho release not found")
+        raise SystemExit("Latest upstream Honcho release and tags not found")
     raise SystemExit(f"failed to resolve latest upstream Honcho release: HTTP {exc.code}")
 except urllib.error.URLError as exc:
     raise SystemExit(f"failed to resolve latest upstream Honcho release: {exc.reason}")
 
-raise SystemExit("Latest upstream Honcho release did not include a tag name")
+raise SystemExit("Latest upstream Honcho release and tags did not include a tag name")
 PY
 }
 
@@ -279,6 +297,10 @@ ensure_workspace_dirs() {
   mkdir -p "$WORKSPACE_ROOT" "$HONCHO_HOME_DIR" "$HONCHO_WORKSPACE_DIR" "$DATA_POSTGRES_DIR" "$DATA_REDIS_DIR"
 }
 
+require_existing_workspace() {
+  [[ -d "$WORKSPACE_ROOT" ]] || fail "workspace not found: $WORKSPACE_ROOT"
+}
+
 migrate_legacy_workspace_layout() {
   local legacy_path
   local target
@@ -307,25 +329,15 @@ migrate_legacy_workspace_layout() {
 
 load_runtime_env_file() {
   local env_file="$1"
+  local parsed_env_file
 
   [[ -f "$env_file" ]] || fail "env file not found: $env_file"
+  require_python3
 
-  while IFS= read -r -d '' key && IFS= read -r -d '' value; do
-    case "$key" in
-      HONCHO_API_HOST_PORT)
-        HONCHO_API_HOST_PORT="$value"
-        ;;
-      HONCHO_DB_HOST_PORT)
-        HONCHO_DB_HOST_PORT="$value"
-        ;;
-      HONCHO_REDIS_HOST_PORT)
-        HONCHO_REDIS_HOST_PORT="$value"
-        ;;
-      HONCHO_REMOVE_VOLUMES)
-        HONCHO_REMOVE_VOLUMES="$value"
-        ;;
-    esac
-  done < <(python3 - "$env_file" <<'PY'
+  parsed_env_file="$(mktemp)"
+  trap 'rm -f "$parsed_env_file"' RETURN
+
+  python3 - "$env_file" > "$parsed_env_file" <<'PY'
 import pathlib
 import re
 import sys
@@ -352,47 +364,181 @@ for raw_line in pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines
     value = value.strip()
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
         value = value[1:-1]
-    sys.stdout.buffer.write(key.encode("utf-8") + b"\0" + value.encode("utf-8") + b"\0")
+    print(f"{key}={value}")
 PY
-)
+
+  while IFS='=' read -r key value; do
+    case "$key" in
+      HONCHO_API_HOST_PORT)
+        HONCHO_API_HOST_PORT="$value"
+        ;;
+      HONCHO_DB_HOST_PORT)
+        HONCHO_DB_HOST_PORT="$value"
+        ;;
+      HONCHO_REDIS_HOST_PORT)
+        HONCHO_REDIS_HOST_PORT="$value"
+        ;;
+      HONCHO_REMOVE_VOLUMES)
+        HONCHO_REMOVE_VOLUMES="$value"
+        ;;
+    esac
+  done < "$parsed_env_file"
 }
 
 ensure_required_runtime_env() {
-  if [[ -n "${LLM_OPENAI_API_KEY:-}" || -n "${LLM_ANTHROPIC_API_KEY:-}" || -n "${LLM_GEMINI_API_KEY:-}" || -n "${LLM_GROQ_API_KEY:-}" ]]; then
-    return 0
-  fi
+  require_python_runtime_validation
 
-  python3 - "$HONCHO_ENV_FILE" <<'PY' >/dev/null || fail "at least one LLM provider API key is required in $HONCHO_ENV_FILE"
+  python3 - "$HONCHO_ENV_FILE" "$HONCHO_CONFIG_TOML" <<'PY' >/dev/null || fail "missing required provider credentials for the configured Honcho providers in $HONCHO_ENV_FILE or the current shell environment"
+import os
 import pathlib
 import re
 import sys
 
-keys = {
-    "LLM_OPENAI_API_KEY",
-    "LLM_ANTHROPIC_API_KEY",
-    "LLM_GEMINI_API_KEY",
-    "LLM_GROQ_API_KEY",
+ENV_PATH = pathlib.Path(sys.argv[1])
+CONFIG_PATH = pathlib.Path(sys.argv[2])
+
+provider_to_key = {
+    "openai": "LLM_OPENAI_API_KEY",
+    "anthropic": "LLM_ANTHROPIC_API_KEY",
+    "google": "LLM_GEMINI_API_KEY",
+    "groq": "LLM_GROQ_API_KEY",
+    "custom": "LLM_OPENAI_COMPATIBLE_API_KEY",
+    "vllm": "LLM_VLLM_API_KEY",
+    "openrouter": "LLM_OPENAI_COMPATIBLE_API_KEY",
 }
 
-for raw_line in pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
-    line = raw_line.strip()
-    if not line or line.startswith("#"):
-        continue
-    if line.startswith("export "):
-        line = line[7:].lstrip()
-    if "=" not in line:
-        continue
-    key, value = line.split("=", 1)
-    key = key.strip()
-    if key not in keys or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
-        continue
-    value = value.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
-        value = value[1:-1]
-    if value:
-        raise SystemExit(0)
+provider_requirements = {
+    "openai": ["LLM_OPENAI_API_KEY"],
+    "anthropic": ["LLM_ANTHROPIC_API_KEY"],
+    "google": ["LLM_GEMINI_API_KEY"],
+    "groq": ["LLM_GROQ_API_KEY"],
+    "custom": ["LLM_OPENAI_COMPATIBLE_API_KEY", "LLM_OPENAI_COMPATIBLE_BASE_URL"],
+    "openrouter": ["LLM_OPENAI_COMPATIBLE_API_KEY", "LLM_OPENAI_COMPATIBLE_BASE_URL"],
+    "vllm": ["LLM_VLLM_API_KEY", "LLM_VLLM_BASE_URL"],
+}
 
-raise SystemExit(1)
+provider_fields = {
+    ("llm", "EMBEDDING_PROVIDER"),
+    ("deriver", "PROVIDER"),
+    ("deriver", "BACKUP_PROVIDER"),
+    ("summary", "PROVIDER"),
+    ("summary", "BACKUP_PROVIDER"),
+    ("dream", "PROVIDER"),
+    ("dream", "BACKUP_PROVIDER"),
+}
+
+dialectic_levels = ("minimal", "low", "medium", "high", "max")
+for level in dialectic_levels:
+    provider_fields.add((f"dialectic.levels.{level}", "PROVIDER"))
+    provider_fields.add((f"dialectic.levels.{level}", "BACKUP_PROVIDER"))
+
+
+def parse_env_file(path: pathlib.Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not path.is_file():
+        return values
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+
+def read_configured_providers(path: pathlib.Path) -> set[str]:
+    if not path.is_file():
+        return set()
+    configured: set[str] = set()
+    current_section = None
+    section_pattern = re.compile(r"^\[([^\]]+)\]\s*$")
+    assignment_pattern = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$")
+
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        section_match = section_pattern.match(line)
+        if section_match:
+            current_section = section_match.group(1).strip()
+            continue
+
+        assignment_match = assignment_pattern.match(line)
+        if not assignment_match or current_section is None:
+            continue
+
+        field_name, raw_value = assignment_match.groups()
+        candidate = raw_value.split("#", 1)[0].strip()
+        if len(candidate) >= 2 and candidate[0] == candidate[-1] and candidate[0] in {'"', "'"}:
+            candidate = candidate[1:-1]
+
+        if (current_section, field_name) in provider_fields and candidate:
+            configured.add(candidate.strip().lower())
+
+    return configured
+
+
+def read_env_selected_providers(values: dict[str, str]) -> set[str]:
+    selected: set[str] = set()
+    env_provider_keys = {
+        "LLM_EMBEDDING_PROVIDER",
+        "DERIVER_PROVIDER",
+        "DERIVER_BACKUP_PROVIDER",
+        "SUMMARY_PROVIDER",
+        "SUMMARY_BACKUP_PROVIDER",
+        "DREAM_PROVIDER",
+        "DREAM_BACKUP_PROVIDER",
+    }
+    for level in dialectic_levels:
+        env_provider_keys.add(f"DIALECTIC_LEVELS__{level}__PROVIDER")
+        env_provider_keys.add(f"DIALECTIC_LEVELS__{level}__BACKUP_PROVIDER")
+
+    for key in env_provider_keys:
+        value = values.get(key, "").strip().lower()
+        if value:
+            selected.add(value)
+    return selected
+
+runtime_values = parse_env_file(ENV_PATH)
+for key, value in os.environ.items():
+    if value:
+        runtime_values[key] = value
+
+configured_providers = read_configured_providers(CONFIG_PATH)
+configured_providers.update(read_env_selected_providers(runtime_values))
+required_keys = set()
+for provider in configured_providers:
+    required_keys.update(provider_requirements.get(provider, []))
+
+if not required_keys:
+    required_keys = {
+        "LLM_OPENAI_API_KEY",
+        "LLM_ANTHROPIC_API_KEY",
+        "LLM_GEMINI_API_KEY",
+        "LLM_GROQ_API_KEY",
+        "LLM_OPENAI_COMPATIBLE_API_KEY",
+        "LLM_VLLM_API_KEY",
+    }
+    if any(runtime_values.get(key, "").strip() for key in required_keys):
+        raise SystemExit(0)
+    raise SystemExit(1)
+
+missing = [key for key in sorted(required_keys) if not runtime_values.get(key, "").strip()]
+if missing:
+    raise SystemExit(1)
+
+raise SystemExit(0)
 PY
 }
 
@@ -407,12 +553,18 @@ create_compose_env_file() {
     printf 'HONCHO_API_HOST_PORT=%s\n' "$HONCHO_API_HOST_PORT"
     printf 'HONCHO_DB_HOST_PORT=%s\n' "$HONCHO_DB_HOST_PORT"
     printf 'HONCHO_REDIS_HOST_PORT=%s\n' "$HONCHO_REDIS_HOST_PORT"
-    printf 'DATA_POSTGRES_DIR=%s\n' "$DATA_POSTGRES_DIR"
-    printf 'DATA_REDIS_DIR=%s\n' "$DATA_REDIS_DIR"
+    if [[ "$DATA_POSTGRES_DIR" == /* ]]; then
+      printf 'DATA_POSTGRES_DIR=%s\n' "$DATA_POSTGRES_DIR"
+    fi
+    if [[ "$DATA_REDIS_DIR" == /* ]]; then
+      printf 'DATA_REDIS_DIR=%s\n' "$DATA_REDIS_DIR"
+    fi
     if [[ -n "${HONCHO_WRAPPER_FINGERPRINT:-}" ]]; then
       printf 'HONCHO_WRAPPER_FINGERPRINT=%s\n' "$HONCHO_WRAPPER_FINGERPRINT"
     fi
     if [[ -f "$source_file" ]]; then
+      require_python3
+
       python3 - "$source_file" <<'PY'
 import pathlib
 import re
@@ -463,20 +615,61 @@ env_template_path() {
 
 create_compose_override() {
   local output_file="$1"
+  local runtime_env_file="${2:-}"
+  local add_workspace_mounts=0
+  local add_runtime_env_file=0
+  local has_service_overrides=0
+
+  if [[ "$HONCHO_WORKSPACE_DIR" == /* ]]; then
+    add_workspace_mounts=1
+  fi
+
+  if [[ -n "$runtime_env_file" && -f "$runtime_env_file" ]]; then
+    add_runtime_env_file=1
+  fi
+
+  if (( add_workspace_mounts )) || (( add_runtime_env_file )) || [[ -f "$HONCHO_CONFIG_TOML" ]] || [[ -n "$HONCHO_DB_HOST_PORT" ]] || [[ -n "$HONCHO_REDIS_HOST_PORT" ]]; then
+    has_service_overrides=1
+  fi
+
+  if (( ! has_service_overrides )); then
+    : > "$output_file"
+    return 0
+  fi
 
   {
     printf '%s\n' 'services:'
-    printf '%s\n' '  api:'
-    printf '%s\n' '    volumes:'
-    printf '      - "%s:/workspace"\n' "$HONCHO_WORKSPACE_DIR"
-    if [[ -f "$HONCHO_CONFIG_TOML" ]]; then
-      printf '      - "%s:/app/config.toml:ro"\n' "$HONCHO_CONFIG_TOML"
+    if (( add_workspace_mounts )) || (( add_runtime_env_file )) || [[ -f "$HONCHO_CONFIG_TOML" ]]; then
+      printf '%s\n' '  api:'
+      if (( add_runtime_env_file )); then
+        printf '%s\n' '    env_file:'
+        printf '      - "%s"\n' "$runtime_env_file"
+      fi
+      if (( add_workspace_mounts )) || [[ -f "$HONCHO_CONFIG_TOML" ]]; then
+        printf '%s\n' '    volumes:'
+        if (( add_workspace_mounts )); then
+          printf '      - "%s:/workspace"\n' "$HONCHO_WORKSPACE_DIR"
+        fi
+        if [[ -f "$HONCHO_CONFIG_TOML" ]]; then
+          printf '      - "%s:/app/config.toml:ro"\n' "$HONCHO_CONFIG_TOML"
+        fi
+      fi
     fi
-    printf '%s\n' '  deriver:'
-    printf '%s\n' '    volumes:'
-    printf '      - "%s:/workspace"\n' "$HONCHO_WORKSPACE_DIR"
-    if [[ -f "$HONCHO_CONFIG_TOML" ]]; then
-      printf '      - "%s:/app/config.toml:ro"\n' "$HONCHO_CONFIG_TOML"
+    if (( add_workspace_mounts )) || (( add_runtime_env_file )) || [[ -f "$HONCHO_CONFIG_TOML" ]]; then
+      printf '%s\n' '  deriver:'
+      if (( add_runtime_env_file )); then
+        printf '%s\n' '    env_file:'
+        printf '      - "%s"\n' "$runtime_env_file"
+      fi
+      if (( add_workspace_mounts )) || [[ -f "$HONCHO_CONFIG_TOML" ]]; then
+        printf '%s\n' '    volumes:'
+        if (( add_workspace_mounts )); then
+          printf '      - "%s:/workspace"\n' "$HONCHO_WORKSPACE_DIR"
+        fi
+        if [[ -f "$HONCHO_CONFIG_TOML" ]]; then
+          printf '      - "%s:/app/config.toml:ro"\n' "$HONCHO_CONFIG_TOML"
+        fi
+      fi
     fi
     if [[ -n "$HONCHO_DB_HOST_PORT" ]]; then
       printf '%s\n' '  database:'
@@ -504,7 +697,7 @@ run_compose() {
 
   cmd+=( -f "$(compose_file_path)" )
 
-  if [[ -f "$override_file" ]]; then
+  if [[ -s "$override_file" ]]; then
     cmd+=( -f "$override_file" )
   fi
 
@@ -522,7 +715,8 @@ stack_status_output() {
 stack_has_running_services() {
   local status_output="$1"
 
-  [[ "$status_output" == *running* || "$status_output" == *Up* ]]
+  printf '%s\n' "$status_output" | grep -Eiq '(_api_[0-9]+|^api([[:space:]]|$)).*(running|Up)|(running|Up).*(_api_[0-9]+|^api([[:space:]]|$))' \
+    && printf '%s\n' "$status_output" | grep -Eiq '(_deriver_[0-9]+|^deriver([[:space:]]|$)).*(running|Up)|(running|Up).*(_deriver_[0-9]+|^deriver([[:space:]]|$))'
 }
 
 stack_has_known_services() {
@@ -542,14 +736,16 @@ wait_for_api() {
   api_url="$(honcho_api_url)/openapi.json"
 
   until python3 - "$api_url" <<'PY'
+import http.client
 from urllib.request import urlopen
 import sys
 
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 
 try:
-    urlopen(sys.argv[1], timeout=5)
-except URLError:
+    with urlopen(sys.argv[1], timeout=5) as response:
+        raise SystemExit(0 if 200 <= response.status < 300 else 1)
+except (URLError, HTTPError, http.client.HTTPException, ConnectionError, OSError):
     raise SystemExit(1)
 PY
   do

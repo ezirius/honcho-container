@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$ROOT/lib/shell/common.sh"
+
+if [[ ${1-} == "--help" ]]; then
+  show_help "Usage: $(basename "$0")
+
+Run a destructive fresh wrapper test lane against the dedicated test workspace.
+
+This command:
+- removes the previous dedicated test stack if it exists
+- removes the dedicated test image if it exists
+- removes the dedicated test workspace tree under HONCHO_BASE_ROOT/test
+- recreates the test workspace from the local examples
+- builds, upgrades, starts, and verifies the stack using the dedicated test image
+
+The copied config.toml.example selects OpenAI, Gemini, and Anthropic in the
+recommended subset, so those keys must be present in the shell environment:
+- LLM_OPENAI_API_KEY
+- LLM_GEMINI_API_KEY
+- LLM_ANTHROPIC_API_KEY"
+fi
+
+if [[ $# -ne 0 ]]; then
+  usage_error "$(basename "$0") takes no arguments"
+fi
+
+require_podman
+require_podman_compose
+
+TEST_WORKSPACE="test"
+TEST_IMAGE_NAME="honcho-local-test"
+
+resolve_workspace "$TEST_WORKSPACE"
+
+if [[ -d "$WORKSPACE_ROOT" ]]; then
+  HONCHO_IMAGE_NAME="$TEST_IMAGE_NAME" "$SCRIPT_DIR/honcho-remove" "$TEST_WORKSPACE" >/dev/null 2>&1 || true
+fi
+podman image rm -f "$TEST_IMAGE_NAME" >/dev/null 2>&1 || true
+rm -rf "$WORKSPACE_ROOT"
+
+ensure_workspace_dirs
+cp "$ROOT/config/containers/.env.template" "$HONCHO_ENV_FILE"
+cp "$ROOT/config/containers/config.toml.example" "$HONCHO_CONFIG_TOML"
+
+for key in LLM_OPENAI_API_KEY LLM_GEMINI_API_KEY LLM_ANTHROPIC_API_KEY; do
+  value="${!key:-}"
+  [[ -n "$value" ]] || fail "bootstrap-test requires $key in the shell environment"
+  printf '%s=%s\n' "$key" "$value" >> "$HONCHO_ENV_FILE"
+done
+
+for key in HONCHO_API_HOST_PORT HONCHO_DB_HOST_PORT HONCHO_REDIS_HOST_PORT; do
+  value="${!key:-}"
+  if [[ -n "$value" ]]; then
+    printf '%s=%s\n' "$key" "$value" >> "$HONCHO_ENV_FILE"
+  fi
+done
+
+HONCHO_IMAGE_NAME="$TEST_IMAGE_NAME" "$SCRIPT_DIR/honcho-build"
+HONCHO_IMAGE_NAME="$TEST_IMAGE_NAME" "$SCRIPT_DIR/honcho-upgrade"
+HONCHO_IMAGE_NAME="$TEST_IMAGE_NAME" "$SCRIPT_DIR/honcho-start" "$TEST_WORKSPACE"
+exec env HONCHO_IMAGE_NAME="$TEST_IMAGE_NAME" "$SCRIPT_DIR/honcho-status" "$TEST_WORKSPACE"

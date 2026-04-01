@@ -32,6 +32,16 @@ assert_not_contains() {
   fi
 }
 
+assert_path_missing() {
+  local path="$1"
+  local message="$2"
+
+  if [[ -e "$path" ]]; then
+    printf 'assertion failed: %s\nunexpected path exists: %s\n' "$message" "$path" >&2
+    exit 1
+  fi
+}
+
 write_file() {
   local path="$1"
   local content="${2-}"
@@ -108,6 +118,8 @@ case "$subcommand" in
       ps)
         if [[ "$(read_value stack_running)" == "1" ]]; then
           printf 'api running\nderiver running\ndatabase running\nredis running\n'
+        elif [[ "$(read_value partial_running)" == "1" ]]; then
+          printf 'database running\nredis running\n'
         elif [[ "$(read_value stack_exists)" == "1" ]]; then
           printf 'api exited\nderiver exited\ndatabase exited\nredis exited\n'
         fi
@@ -120,6 +132,10 @@ case "$subcommand" in
         rm -f "$STATE_DIR/stack_running" "$STATE_DIR/stack_exists"
         ;;
       logs|exec)
+        ;;
+      start)
+        write_value stack_running 1
+        write_value stack_exists 1
         ;;
       *)
         printf 'unexpected compose action: %s\n' "$action" >&2
@@ -178,15 +194,34 @@ export HONCHO_BASE_ROOT="$TMPDIR/workspaces"
 export HONCHO_IMAGE_NAME="mock-honcho-image"
 export HONCHO_REPO_URL="https://github.com/plastic-labs/honcho.git"
 export HONCHO_REF="v3.0.3"
-export HONCHO_API_HOST_PORT="18081"
+SERVER_PORT="$(python3 - <<'PY'
+import socket
+with socket.socket() as s:
+    s.bind(('127.0.0.1', 0))
+    print(s.getsockname()[1])
+PY
+)"
+export HONCHO_API_HOST_PORT="$SERVER_PORT"
 EXPECTED_BUILD_FINGERPRINT="$({ ROOT="$ROOT" bash -lc '. "$ROOT/lib/shell/common.sh"; local_build_fingerprint'; })"
 
 mkdir -p "$SERVER_ROOT"
 printf '{}' > "$SERVER_ROOT/openapi.json"
-python3 -m http.server 18081 --bind 127.0.0.1 --directory "$SERVER_ROOT" >/dev/null 2>&1 &
+python3 -m http.server "$SERVER_PORT" --bind 127.0.0.1 --directory "$SERVER_ROOT" >/dev/null 2>&1 &
 SERVER_PID=$!
 trap 'kill "$SERVER_PID" >/dev/null 2>&1 || true; wait "$SERVER_PID" 2>/dev/null || true; rm -rf "$TMPDIR"' EXIT
-sleep 1
+python3 - "$SERVER_PORT" <<'PY'
+from urllib.request import urlopen
+from urllib.error import URLError, HTTPError
+import sys, time
+url = f'http://127.0.0.1:{sys.argv[1]}/openapi.json'
+for _ in range(30):
+    try:
+        with urlopen(url, timeout=1) as response:
+            raise SystemExit(0 if 200 <= response.status < 300 else 1)
+    except (URLError, HTTPError, OSError):
+        time.sleep(0.2)
+raise SystemExit(1)
+PY
 
 reset_state
 write_file "$STATE_DIR/image_exists" "1"
@@ -236,8 +271,8 @@ write_file "$STATE_DIR/image_label_honcho_ref" 'v3.0.3'
 write_file "$STATE_DIR/image_label_honcho_wrapper_fingerprint" "$EXPECTED_BUILD_FINGERPRINT"
 mkdir -p "$HONCHO_BASE_ROOT/ezirius/honcho-home"
 cp "$ROOT/config/containers/.env.template" "$HONCHO_BASE_ROOT/ezirius/honcho-home/.env"
-printf '\nLLM_OPENAI_API_KEY=test-key\n' >> "$HONCHO_BASE_ROOT/ezirius/honcho-home/.env"
-printf 'HONCHO_API_HOST_PORT=18081\n' >> "$HONCHO_BASE_ROOT/ezirius/honcho-home/.env"
+printf '\nLLM_OPENAI_API_KEY=mock-openai-key\n' >> "$HONCHO_BASE_ROOT/ezirius/honcho-home/.env"
+printf 'HONCHO_API_HOST_PORT=%s\n' "$SERVER_PORT" >> "$HONCHO_BASE_ROOT/ezirius/honcho-home/.env"
 printf 'HONCHO_IMAGE_NAME=workspace-override\n' >> "$HONCHO_BASE_ROOT/ezirius/honcho-home/.env"
 "$ROOT/scripts/shared/bootstrap" ezirius > "$STATE_DIR/bootstrap.out"
 assert_contains "$STATE_DIR/bootstrap.out" 'No upgrade needed' 'bootstrap checks upgrade after build'
@@ -264,9 +299,31 @@ assert_contains "$STATE_DIR/podman.log" 'compose up -d database redis api derive
 
 reset_state
 write_file "$STATE_DIR/stack_exists" '1'
+write_file "$STATE_DIR/partial_running" '1'
+"$ROOT/scripts/shared/honcho-start" ezirius > "$STATE_DIR/start-partial.out"
+assert_contains "$STATE_DIR/start-partial.out" 'Starting existing stopped Honcho stack:' 'start repairs partially running stack'
+assert_contains "$STATE_DIR/podman.log" 'compose up -d database redis api deriver' 'start uses compose up when api or deriver is missing'
+
+reset_state
+write_file "$STATE_DIR/stack_exists" '1'
 "$ROOT/scripts/shared/honcho-logs" ezirius api > "$STATE_DIR/logs.out"
-assert_contains "$STATE_DIR/logs.out" 'Streaming Honcho logs:' 'logs reports target stack'
-assert_contains "$STATE_DIR/podman.log" 'compose logs -f api' 'logs forwards compose log arguments'
+assert_contains "$STATE_DIR/logs.out" 'Honcho logs:' 'logs reports target stack'
+assert_contains "$STATE_DIR/podman.log" 'compose logs api' 'logs forwards compose log arguments'
+
+MISSING_WORKSPACE_ERR="$STATE_DIR/missing-workspace.err"
+if "$ROOT/scripts/shared/honcho-status" missing >/dev/null 2> "$MISSING_WORKSPACE_ERR"; then
+  printf 'assertion failed: status should reject a nonexistent workspace\n' >&2
+  exit 1
+fi
+assert_contains "$MISSING_WORKSPACE_ERR" 'workspace not found:' 'status reports missing workspace clearly'
+assert_path_missing "$TMPDIR/workspaces/missing" 'status should not create a missing workspace tree'
+
+if "$ROOT/scripts/shared/honcho-remove" missing >/dev/null 2> "$MISSING_WORKSPACE_ERR"; then
+  printf 'assertion failed: remove should reject a nonexistent workspace\n' >&2
+  exit 1
+fi
+assert_contains "$MISSING_WORKSPACE_ERR" 'workspace not found:' 'remove reports missing workspace clearly'
+assert_path_missing "$TMPDIR/workspaces/missing" 'remove should not create a missing workspace tree'
 
 reset_state
 write_file "$STATE_DIR/stack_exists" '1'
@@ -295,5 +352,21 @@ mkdir -p "$HONCHO_BASE_ROOT/ezirius/honcho-home/postgres-data" "$HONCHO_BASE_ROO
 HONCHO_REMOVE_VOLUMES=1 "$ROOT/scripts/shared/honcho-remove" ezirius > "$STATE_DIR/remove-volumes.out"
 assert_contains "$STATE_DIR/remove-volumes.out" 'Honcho stack removed with service data' 'remove reports volume cleanup'
 assert_contains "$STATE_DIR/podman.log" 'compose down --remove-orphans --volumes' 'remove with volumes tears down compose stack and volumes'
+
+reset_state
+mkdir -p "$HONCHO_BASE_ROOT/test/honcho-home"
+write_file "$STATE_DIR/image_exists" '1'
+write_file "$STATE_DIR/stack_exists" '1'
+write_file "$STATE_DIR/stack_running" '1'
+LLM_OPENAI_API_KEY=mock-openai-key \
+LLM_GEMINI_API_KEY=mock-gemini-key \
+LLM_ANTHROPIC_API_KEY=mock-anthropic-key \
+"$ROOT/scripts/shared/bootstrap-test" > "$STATE_DIR/bootstrap-test.out"
+assert_contains "$STATE_DIR/podman.log" 'compose down --remove-orphans' 'bootstrap-test removes the previous test stack when present'
+assert_contains "$STATE_DIR/podman.log" 'image rm -f honcho-local-test' 'bootstrap-test removes the dedicated test image'
+assert_contains "$STATE_DIR/podman.log" 'compose build --pull --no-cache api deriver' 'bootstrap-test rebuilds the dedicated test image'
+assert_contains "$STATE_DIR/podman.log" 'compose up -d database redis api deriver' 'bootstrap-test starts the dedicated test stack'
+assert_contains "$STATE_DIR/podman.log" 'compose ps ' 'bootstrap-test verifies the dedicated test stack'
+assert_contains "$STATE_DIR/bootstrap-test.out" 'Honcho API is healthy:' 'bootstrap-test reports a healthy dedicated test stack'
 
 echo "Runtime behaviour checks passed"

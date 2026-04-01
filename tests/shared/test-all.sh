@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 bash -n \
   "$ROOT/scripts/shared/bootstrap" \
+  "$ROOT/scripts/shared/bootstrap-test" \
   "$ROOT/scripts/shared/honcho-build" \
   "$ROOT/scripts/shared/honcho-upgrade" \
   "$ROOT/scripts/shared/honcho-start" \
@@ -17,13 +18,17 @@ bash -n \
   "$ROOT/tests/shared/test-layout.sh" \
   "$ROOT/tests/shared/test-common.sh" \
   "$ROOT/tests/shared/test-args.sh" \
+  "$ROOT/tests/shared/test-upstream-alignment.sh" \
   "$ROOT/tests/shared/test-ref-resolution.sh" \
-  "$ROOT/tests/shared/test-runtime.sh"
+  "$ROOT/tests/shared/test-runtime.sh" \
+  "$ROOT/tests/shared/test-smoke-live.sh"
 
 "$ROOT/tests/shared/test-layout.sh"
 "$ROOT/tests/shared/test-common.sh"
 "$ROOT/tests/shared/test-args.sh"
+"$ROOT/tests/shared/test-upstream-alignment.sh"
 "$ROOT/tests/shared/test-ref-resolution.sh"
 "$ROOT/tests/shared/test-runtime.sh"
+"$ROOT/tests/shared/test-smoke-live.sh"
 
 echo "All Honcho checks passed"

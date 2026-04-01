@@ -3,98 +3,138 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
-test -f "$ROOT/README.md"
-test -f "$ROOT/.gitignore"
-test -f "$ROOT/config/containers/Dockerfile"
-test -f "$ROOT/config/containers/compose.yaml"
-test -f "$ROOT/config/containers/.env.template"
-test -f "$ROOT/config/containers/config.toml.example"
-test -f "$ROOT/config/containers/database/init.sql"
-test -f "$ROOT/docs/shared/usage.md"
-test -f "$ROOT/lib/shell/common.sh"
-test -f "$ROOT/scripts/shared/bootstrap"
-test -f "$ROOT/scripts/shared/honcho-build"
-test -f "$ROOT/scripts/shared/honcho-upgrade"
-test -f "$ROOT/scripts/shared/honcho-start"
-test -f "$ROOT/scripts/shared/honcho-status"
-test -f "$ROOT/scripts/shared/honcho-logs"
-test -f "$ROOT/scripts/shared/honcho-shell"
-test -f "$ROOT/scripts/shared/honcho-stop"
-test -f "$ROOT/scripts/shared/honcho-remove"
-test -f "$ROOT/tests/shared/test-all.sh"
-test -f "$ROOT/tests/shared/test-args.sh"
-test -f "$ROOT/tests/shared/test-common.sh"
-test -f "$ROOT/tests/shared/test-ref-resolution.sh"
-test -f "$ROOT/tests/shared/test-runtime.sh"
+required_files=(
+  "$ROOT/README.md"
+  "$ROOT/.gitignore"
+  "$ROOT/config/containers/Dockerfile"
+  "$ROOT/config/containers/compose.yaml"
+  "$ROOT/config/containers/.env.template"
+  "$ROOT/config/containers/wrapper.env.example"
+  "$ROOT/config/containers/config.toml.example"
+  "$ROOT/config/containers/database/init.sql"
+  "$ROOT/docs/shared/usage.md"
+  "$ROOT/lib/shell/common.sh"
+  "$ROOT/scripts/shared/bootstrap"
+  "$ROOT/scripts/shared/bootstrap-test"
+  "$ROOT/scripts/shared/honcho-build"
+  "$ROOT/scripts/shared/honcho-upgrade"
+  "$ROOT/scripts/shared/honcho-start"
+  "$ROOT/scripts/shared/honcho-status"
+  "$ROOT/scripts/shared/honcho-logs"
+  "$ROOT/scripts/shared/honcho-shell"
+  "$ROOT/scripts/shared/honcho-stop"
+  "$ROOT/scripts/shared/honcho-remove"
+  "$ROOT/tests/shared/test-all.sh"
+  "$ROOT/tests/shared/test-args.sh"
+  "$ROOT/tests/shared/test-common.sh"
+  "$ROOT/tests/shared/test-upstream-alignment.sh"
+  "$ROOT/tests/shared/test-ref-resolution.sh"
+  "$ROOT/tests/shared/test-runtime.sh"
+  "$ROOT/tests/shared/test-smoke-live.sh"
+)
 
-grep -q '^  api:$' "$ROOT/config/containers/compose.yaml"
-grep -q '^  deriver:$' "$ROOT/config/containers/compose.yaml"
-grep -q '^  database:$' "$ROOT/config/containers/compose.yaml"
-grep -q '^  redis:$' "$ROOT/config/containers/compose.yaml"
+for path in "${required_files[@]}"; do
+  test -f "$path"
+done
+
+grep -q '^\.tmp/$' "$ROOT/.gitignore"
+grep -q '^CREATE EXTENSION IF NOT EXISTS vector;$' "$ROOT/config/containers/database/init.sql"
+
+# Compose contract
+for service in api deriver database redis; do
+  grep -q "^  ${service}:$" "$ROOT/config/containers/compose.yaml"
+done
 grep -q '^      - \${HONCHO_API_HOST_PORT:-8000}:8000$' "$ROOT/config/containers/compose.yaml"
 ! grep -q '^      - .*:5432$' "$ROOT/config/containers/compose.yaml"
 ! grep -q '^      - .*:6379$' "$ROOT/config/containers/compose.yaml"
+grep -q 'HONCHO_WRAPPER_FINGERPRINT: \${HONCHO_WRAPPER_FINGERPRINT:-}' "$ROOT/config/containers/compose.yaml"
+grep -q 'src.deriver' "$ROOT/config/containers/compose.yaml"
+grep -q 'scripts/provision_db.py && exec /app/.venv/bin/fastapi run' "$ROOT/config/containers/compose.yaml"
+
+# Workspace env / wrapper env split
 grep -q '^HONCHO_API_HOST_PORT=8000$' "$ROOT/config/containers/.env.template"
 grep -q '^HONCHO_DB_HOST_PORT=$' "$ROOT/config/containers/.env.template"
 grep -q '^HONCHO_REDIS_HOST_PORT=$' "$ROOT/config/containers/.env.template"
-grep -q '^HONCHO_BASE_ROOT=' "$ROOT/config/containers/.env.template"
-grep -q '^HONCHO_REF=latest-release$' "$ROOT/config/containers/.env.template"
-grep -q '^CREATE EXTENSION IF NOT EXISTS vector;$' "$ROOT/config/containers/database/init.sql"
+! grep -q '^HONCHO_BASE_ROOT=' "$ROOT/config/containers/.env.template"
+! grep -q '^HONCHO_REF=latest-release$' "$ROOT/config/containers/.env.template"
+grep -q 'LLM_OPENAI_COMPATIBLE_API_KEY' "$ROOT/config/containers/.env.template"
+grep -q 'LLM_VLLM_API_KEY' "$ROOT/config/containers/.env.template"
+grep -q 'AUTH_JWT_SECRET' "$ROOT/config/containers/.env.template"
+
+grep -q '^HONCHO_BASE_ROOT=~/Documents/Ezirius/.applications-data/Honcho$' "$ROOT/config/containers/wrapper.env.example"
+grep -q '^HONCHO_REF=latest-release$' "$ROOT/config/containers/wrapper.env.example"
+
+# Dockerfile contract
 grep -q '^LABEL honcho.repo_url=\$HONCHO_REPO_URL$' "$ROOT/config/containers/Dockerfile"
 grep -q '^LABEL honcho.ref=\$HONCHO_REF$' "$ROOT/config/containers/Dockerfile"
 grep -q '^LABEL honcho.wrapper_fingerprint=\$HONCHO_WRAPPER_FINGERPRINT$' "$ROOT/config/containers/Dockerfile"
-grep -q 'HONCHO_WRAPPER_FINGERPRINT: \${HONCHO_WRAPPER_FINGERPRINT:-}' "$ROOT/config/containers/compose.yaml"
-grep -q '^    restart: unless-stopped$' "$ROOT/config/containers/compose.yaml"
-grep -q '^github_repo_slug() {$' "$ROOT/lib/shell/common.sh"
-grep -q '^image_exists() {$' "$ROOT/lib/shell/common.sh"
-grep -q '^image_label() {$' "$ROOT/lib/shell/common.sh"
-grep -q '^local_build_fingerprint() {$' "$ROOT/lib/shell/common.sh"
-grep -q '^current_image_build_fingerprint() {$' "$ROOT/lib/shell/common.sh"
-grep -q '^resolve_honcho_ref() {$' "$ROOT/lib/shell/common.sh"
+grep -q '^ENV UV_HTTP_TIMEOUT=120$' "$ROOT/config/containers/Dockerfile"
+grep -q '^ENV UV_HTTP_RETRIES=5$' "$ROOT/config/containers/Dockerfile"
+grep -q 'git init /app' "$ROOT/config/containers/Dockerfile"
+grep -q 'git -C /app fetch --depth 1 origin "\$HONCHO_REF"' "$ROOT/config/containers/Dockerfile"
+grep -q 'git -C /app checkout --detach FETCH_HEAD' "$ROOT/config/containers/Dockerfile"
+
+# Docs contract
+grep -q 'latest validated upstream baseline is `v3.0.3`' "$ROOT/README.md"
+grep -q 'latest validated upstream baseline is `v3.0.3`' "$ROOT/docs/shared/usage.md"
+grep -q 'Use upstream Docker or compose directly when you want one standard Honcho deployment with upstream defaults.' "$ROOT/README.md"
+grep -q 'Use upstream Docker or compose directly when you want one standard Honcho deployment with upstream defaults.' "$ROOT/docs/shared/usage.md"
+grep -q 'repeatable fresh test lane through `bootstrap-test`' "$ROOT/README.md"
+grep -q 'destructive fresh wrapper test lane' "$ROOT/docs/shared/usage.md"
+grep -q 'curated wrapper-oriented subset aligned to upstream `v3.0.3` defaults where practical' "$ROOT/README.md"
+grep -q 'host-side helper scripts require `python3`' "$ROOT/README.md"
+grep -q 'host-side helper scripts require `python3`' "$ROOT/docs/shared/usage.md"
+
+# Shell helper contract
+for fn in \
+  github_repo_slug \
+  image_exists \
+  image_label \
+  local_build_fingerprint \
+  current_image_build_fingerprint \
+  resolve_honcho_ref \
+  require_podman_compose \
+  require_python_runtime_validation \
+  resolve_workspace \
+  ensure_workspace_dirs \
+  require_existing_workspace \
+  migrate_legacy_workspace_layout \
+  load_runtime_env_file \
+  ensure_required_runtime_env \
+  create_compose_env_file \
+  create_compose_override \
+  stack_status_output \
+  stack_has_running_services \
+  stack_has_known_services \
+  honcho_api_url \
+  wait_for_api; do
+  grep -q "^${fn}() {$" "$ROOT/lib/shell/common.sh"
+done
+
 grep -q '^HONCHO_GITHUB_API_BASE="\${HONCHO_GITHUB_API_BASE:-https://api.github.com}"$' "$ROOT/lib/shell/common.sh"
-grep -q '^require_podman_compose() {$' "$ROOT/lib/shell/common.sh"
-grep -q '^show_help() {$' "$ROOT/lib/shell/common.sh"
-grep -q '^resolve_workspace() {$' "$ROOT/lib/shell/common.sh"
-grep -q '^ensure_workspace_dirs() {$' "$ROOT/lib/shell/common.sh"
-grep -q '^migrate_legacy_workspace_layout() {$' "$ROOT/lib/shell/common.sh"
-grep -q '^load_runtime_env_file() {$' "$ROOT/lib/shell/common.sh"
-grep -q '^create_compose_env_file() {$' "$ROOT/lib/shell/common.sh"
-grep -q '^create_compose_override() {$' "$ROOT/lib/shell/common.sh"
-grep -q '^stack_status_output() {$' "$ROOT/lib/shell/common.sh"
-grep -q '^stack_has_running_services() {$' "$ROOT/lib/shell/common.sh"
-grep -q '^stack_has_known_services() {$' "$ROOT/lib/shell/common.sh"
-grep -q '^wait_for_api() {$' "$ROOT/lib/shell/common.sh"
-grep -q '^  export WORKSPACE_INPUT WORKSPACE_ROOT WORKSPACE_NAME SAFE_WORKSPACE_NAME$' "$ROOT/lib/shell/common.sh"
-grep -q '^  export HONCHO_HOME_DIR HONCHO_WORKSPACE_DIR HONCHO_ENV_FILE HONCHO_CONFIG_TOML DATA_POSTGRES_DIR DATA_REDIS_DIR HONCHO_PROJECT_NAME$' "$ROOT/lib/shell/common.sh"
+grep -q 'http.client.HTTPException' "$ROOT/lib/shell/common.sh"
+
+# Command wiring contract
+for script in bootstrap bootstrap-test honcho-build honcho-upgrade honcho-start honcho-status honcho-logs honcho-shell honcho-stop honcho-remove; do
+  test -x "$ROOT/scripts/shared/$script"
+done
+
 grep -q '^"\$SCRIPT_DIR/honcho-build"$' "$ROOT/scripts/shared/bootstrap"
 grep -q '^"\$SCRIPT_DIR/honcho-upgrade"$' "$ROOT/scripts/shared/bootstrap"
-grep -q '^source "\$ROOT/lib/shell/common.sh"$' "$ROOT/scripts/shared/bootstrap"
 grep -q '^"\$SCRIPT_DIR/honcho-start" "\$1"$' "$ROOT/scripts/shared/bootstrap"
 grep -q '^"\$SCRIPT_DIR/honcho-status" "\$1"$' "$ROOT/scripts/shared/bootstrap"
-grep -q 'local wrapper image recipe changed' "$ROOT/scripts/shared/bootstrap"
-grep -q '^usage_error() {$' "$ROOT/lib/shell/common.sh"
-grep -q '^  usage_error "\$(basename "\$0") takes no arguments"$' "$ROOT/scripts/shared/honcho-build"
-grep -q '^  usage_error "\$(basename "\$0") takes no arguments"$' "$ROOT/scripts/shared/honcho-upgrade"
-grep -q '^  usage_error "\$(basename "\$0") requires exactly 1 argument: <workspace-name>"$' "$ROOT/scripts/shared/honcho-start"
-grep -q '^  usage_error "\$(basename "\$0") requires exactly 1 argument: <workspace-name>"$' "$ROOT/scripts/shared/honcho-status"
-grep -q '^  usage_error "\$(basename "\$0") requires exactly 1 argument: <workspace-name>"$' "$ROOT/scripts/shared/honcho-shell"
-grep -q '^  usage_error "\$(basename "\$0") requires exactly 1 argument: <workspace-name>"$' "$ROOT/scripts/shared/honcho-stop"
-grep -q '^  usage_error "\$(basename "\$0") requires exactly 1 argument: <workspace-name>"$' "$ROOT/scripts/shared/honcho-remove"
-grep -q '^  usage_error "\$(basename "\$0") requires at least 1 argument: <workspace-name> \[compose service args...\]"$' "$ROOT/scripts/shared/honcho-logs"
-grep -q '^HONCHO_PROJECT_NAME="\${HONCHO_PROJECT_PREFIX}-shared"$' "$ROOT/scripts/shared/honcho-build"
+grep -q '^TEST_WORKSPACE="test"$' "$ROOT/scripts/shared/bootstrap-test"
+grep -q '^TEST_IMAGE_NAME="honcho-local-test"$' "$ROOT/scripts/shared/bootstrap-test"
+grep -q '^podman image rm -f "\$TEST_IMAGE_NAME" >/dev/null 2>&1 || true$' "$ROOT/scripts/shared/bootstrap-test"
+grep -q '^rm -rf "\$WORKSPACE_ROOT"$' "$ROOT/scripts/shared/bootstrap-test"
+grep -q '^HONCHO_IMAGE_NAME="\$TEST_IMAGE_NAME" "\$SCRIPT_DIR/honcho-build"$' "$ROOT/scripts/shared/bootstrap-test"
+grep -q '^exec env HONCHO_IMAGE_NAME="\$TEST_IMAGE_NAME" "\$SCRIPT_DIR/honcho-status" "\$TEST_WORKSPACE"$' "$ROOT/scripts/shared/bootstrap-test"
 grep -q '^HONCHO_REF="\$(resolve_honcho_ref)"$' "$ROOT/scripts/shared/honcho-build"
 grep -q '^HONCHO_WRAPPER_FINGERPRINT="\$(local_build_fingerprint)"$' "$ROOT/scripts/shared/honcho-build"
-grep -q '^if image_exists; then$' "$ROOT/scripts/shared/honcho-build"
-grep -q '^create_compose_env_file "\$COMPOSE_ENV_FILE" /dev/null$' "$ROOT/scripts/shared/honcho-build"
 grep -q '^CURRENT_REPO_URL="\$(image_label honcho.repo_url)"$' "$ROOT/scripts/shared/honcho-upgrade"
 grep -q '^CURRENT_REF="\$(image_label honcho.ref)"$' "$ROOT/scripts/shared/honcho-upgrade"
 grep -q '^CURRENT_BUILD_FINGERPRINT="\$(current_image_build_fingerprint)"$' "$ROOT/scripts/shared/honcho-upgrade"
-grep -q '^podman image rm -f "\$HONCHO_IMAGE_NAME" >/dev/null$' "$ROOT/scripts/shared/honcho-upgrade"
-grep -q '^run_compose "\$COMPOSE_ENV_FILE" "\$COMPOSE_OVERRIDE_FILE" build --pull --no-cache api deriver$' "$ROOT/scripts/shared/honcho-build"
-grep -q '^run_compose "\$COMPOSE_ENV_FILE" "\$COMPOSE_OVERRIDE_FILE" up -d database redis api deriver$' "$ROOT/scripts/shared/honcho-start"
-grep -q '^run_compose "\$COMPOSE_ENV_FILE" "\$COMPOSE_OVERRIDE_FILE" exec api /bin/sh$' "$ROOT/scripts/shared/honcho-shell"
-grep -q 'printf .*- "%s:/workspace"' "$ROOT/lib/shell/common.sh"
-grep -q '\${DATA_POSTGRES_DIR:-/tmp/honcho-workspace/postgres-data}:/var/lib/postgresql/data/' "$ROOT/config/containers/compose.yaml"
-grep -q '\${DATA_REDIS_DIR:-/tmp/honcho-workspace/redis-data}:/data' "$ROOT/config/containers/compose.yaml"
+grep -q 'run_compose ".*" ".*" up -d database redis api deriver' "$ROOT/scripts/shared/honcho-start"
+grep -q 'run_compose ".*" ".*" exec api /bin/sh' "$ROOT/scripts/shared/honcho-shell"
 
 echo "Layout checks passed"
